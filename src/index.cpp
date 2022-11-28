@@ -783,7 +783,8 @@ namespace diskann {
               std::stringstream msg;
               msg << "Out of range edge " << _final_graph[n][m]
                   << " found at vertex " << n << std::endl;
-              msg <<" max pts, num_frozen = " << _max_points <<", " << _num_frozen_pts << std::endl;
+              msg << " max pts, num_frozen = " << _max_points << ", "
+                  << _num_frozen_pts << std::endl;
               throw diskann::ANNException(msg.str(), -1, __FUNCSIG__, __FILE__,
                                           __LINE__);
             }
@@ -1118,7 +1119,7 @@ namespace diskann {
 
       search_for_point_and_add_links(node, _indexingQueueSize, scratch);
 
-      if (node_ctr % 100000 == 0) {
+      if (node_ctr % 2000 == 0) {
         diskann::cout << "\r" << (100.0 * node_ctr) / (visit_order.size())
                       << "\% of index build completed." << std::flush;
       }

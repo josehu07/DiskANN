@@ -16,10 +16,16 @@ void block_convert(std::ifstream& reader, std::ofstream& writer,
 }
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::cout << argv[0] << " input_fvecs output_bin" << std::endl;
+  if (argc != 3 && argc != 4) {
+    std::cout << argv[0] << " input_fvecs output_bin [max_npts]" << std::endl;
     exit(-1);
   }
+
+  _u64 max_npts = 0;
+  if (argc == 4) {
+    max_npts = std::stoul(argv[3]);
+  }
+
   std::ifstream reader(argv[1], std::ios::binary | std::ios::ate);
   _u64          fsize = reader.tellg();
   reader.seekg(0, std::ios::beg);
@@ -29,6 +35,9 @@ int main(int argc, char** argv) {
   reader.seekg(0, std::ios::beg);
   _u64 ndims = (_u64) ndims_u32;
   _u64 npts = fsize / ((ndims + 1) * sizeof(float));
+  if (max_npts != 0) {
+    npts = std::min(npts, max_npts);
+  }
   std::cout << "Dataset: #pts = " << npts << ", # dims = " << ndims
             << std::endl;
 

@@ -357,3 +357,7 @@ MigrationBackup/
 cscope*
 
 build/
+
+.vscode/
+/*BaseKit*.sh
+
