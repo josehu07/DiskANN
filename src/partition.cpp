@@ -176,7 +176,6 @@ void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
   }
 }
 
-
 int estimate_cluster_sizes(float *test_data_float, size_t num_test,
                            float *pivots, const size_t num_centers,
                            const size_t test_dim, const size_t k_base,

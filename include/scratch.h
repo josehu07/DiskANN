@@ -75,9 +75,9 @@ namespace diskann {
     tsl::robin_set<unsigned> _inserted_into_pool_rs;
     boost::dynamic_bitset<> *_inserted_into_pool_bs;
 
-    T        *_aligned_query = nullptr;
+    T *       _aligned_query = nullptr;
     uint32_t *_indices = nullptr;
-    float    *_interim_dists = nullptr;
+    float *   _interim_dists = nullptr;
   };
 
   //
@@ -87,7 +87,7 @@ namespace diskann {
   template<typename T>
   class SSDQueryScratch {
    public:
-    T   *coord_scratch = nullptr;  // MUST BE AT LEAST [MAX_N_CMPS * data_dim]
+    T *  coord_scratch = nullptr;  // MUST BE AT LEAST [MAX_N_CMPS * data_dim]
     _u64 coord_idx = 0;            // index of next [data_dim] scratch to use
 
     char *sector_scratch =
@@ -154,7 +154,7 @@ namespace diskann {
     }
 
    private:
-    T                    *_scratch;
+    T *                   _scratch;
     ConcurrentQueue<T *> &_scratch_pool;
     ScratchStoreManager(const ScratchStoreManager<T> &);
     ScratchStoreManager &operator=(const ScratchStoreManager<T> &);

@@ -72,7 +72,7 @@ namespace diskann {
   //
   // L2 distance functions.
   //
-  
+
   float DistanceL2Int8::compare(const int8_t *a, const int8_t *b,
                                 uint32_t size) const {
     int32_t result = 0;

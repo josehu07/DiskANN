@@ -69,10 +69,10 @@ namespace diskann {
     DISKANN_DLLEXPORT _u32 range_search(const T *query1, const double range,
                                         const _u64          min_l_search,
                                         const _u64          max_l_search,
-                                        std::vector<_u64>  &indices,
+                                        std::vector<_u64> & indices,
                                         std::vector<float> &distances,
                                         const _u64          min_beam_width,
-                                        QueryStats         *stats = nullptr);
+                                        QueryStats *        stats = nullptr);
 
     std::shared_ptr<AlignedFileReader> &reader;
 
@@ -117,7 +117,7 @@ namespace diskann {
     // data: _u8 * n_chunks
     // chunk_size = chunk size of each dimension chunk
     // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
-    _u8              *data = nullptr;
+    _u8 *             data = nullptr;
     _u64              n_chunks;
     FixedChunkPQTable pq_table;
 
@@ -143,11 +143,11 @@ namespace diskann {
     float *centroid_data = nullptr;
 
     // nhood_cache
-    unsigned                                     *nhood_cache_buf = nullptr;
+    unsigned *                                    nhood_cache_buf = nullptr;
     tsl::robin_map<_u32, std::pair<_u32, _u32 *>> nhood_cache;
 
     // coord_cache
-    T                        *coord_cache_buf = nullptr;
+    T *                       coord_cache_buf = nullptr;
     tsl::robin_map<_u32, T *> coord_cache;
 
     // thread-specific scratch
@@ -163,7 +163,7 @@ namespace diskann {
     // any additions we make to the header. This is an outer limit
     // on how big the header can be.
     static const int HEADER_SIZE = SECTOR_LEN;
-    char            *getHeaderBytes();
+    char *           getHeaderBytes();
 #endif
   };
 }  // namespace diskann

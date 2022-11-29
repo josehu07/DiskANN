@@ -19,7 +19,17 @@ project(diskann)
 
 cmake_minimum_required(VERSION 3.15)
 
-set(CMAKE_STANDARD 14)
+set(CMAKE_STANDARD 17)
+
+cmake_policy(SET CMP0135 NEW)
+include(FetchContent)
+
+FetchContent_Declare(
+    tensorstore
+    URL "https://github.com/google/tensorstore/archive/refs/tags/v0.1.28.tar.gz"
+)
+
+FetchContent_MakeAvailable(tensorstore)
 
 if(NOT MSVC)
 	set(CMAKE_CXX_COMPILER g++)

@@ -2,7 +2,7 @@
 #include "windows_customizations.h"
 
 namespace diskann {
-  enum Metric { L2 = 0, INNER_PRODUCT = 1, COSINE = 2, FAST_L2 = 3};
+  enum Metric { L2 = 0, INNER_PRODUCT = 1, COSINE = 2, FAST_L2 = 3 };
 
   template<typename T>
   class Distance {
@@ -82,8 +82,8 @@ namespace diskann {
                                             uint32_t length) const {
       uint32_t result = 0;
       for (uint32_t i = 0; i < length; i++) {
-        result += ((int32_t) ((int16_t) a[i] - (int16_t) b[i])) *
-                  ((int32_t) ((int16_t) a[i] - (int16_t) b[i]));
+        result += ((int32_t)((int16_t) a[i] - (int16_t) b[i])) *
+                  ((int32_t)((int16_t) a[i] - (int16_t) b[i]));
       }
       return (float) result;
     }
