@@ -1,4 +1,29 @@
-# DiskANN
+# DiskANN with TensorStore Backend
+
+UW-Madison CS744, Fall 2022
+
+## Build
+
+On a CloudLab Ubuntu 20.04 machine:
+
+* Install necessary DiskANN dependencies (see original README below)
+* Install `gcc` suite version >=10.x and set as default
+* Install `cmake` version >= 3.24
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+```
+
+Note that Internet connection is required for the build, as the CMake involves Google's `FetchContent` utility, which will download `tensorstore` from our forked GitHub repo and its dependencies over the network.
+
+## TODO
+
+TODO
+
+
+# DiskANN - Original README
 
 The goal of the project is to build scalable, performant, streaming and cost-effective approximate nearest neighbor search algorithms for trillion-scale vector search.
 This release has the code from the [DiskANN paper](https://papers.nips.cc/paper/9527-rand-nsg-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node.pdf) published in NeurIPS 2019, 

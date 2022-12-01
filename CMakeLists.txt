@@ -26,7 +26,7 @@ include(FetchContent)
 
 FetchContent_Declare(
     tensorstore
-    URL "https://github.com/google/tensorstore/archive/refs/tags/v0.1.28.tar.gz"
+    URL "https://github.com/josehu07/tensorstore/archive/refs/tags/v0.1.28-half-fix.tar.gz"
 )
 
 FetchContent_MakeAvailable(tensorstore)
