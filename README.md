@@ -2,6 +2,18 @@
 
 UW-Madison CS744, Fall 2022
 
+![TensorStoreANN](TensorStoreANN.png)
+
+Benefits of using TensorStore as the index storage backend:
+* Shareable index files across multiple array formats with a uniform API
+    * Port to TensorStore zarr with nothing fancy, compare
+* Automatic handling of data caching
+    * Change to use TensorStore caching, compare
+* Asynchronous I/O for high-throughput access
+    * Maybe? Identify async. I/O opportunities
+* Controlled concurrent I/O with remote storage backend
+    * Future work
+
 ## Build
 
 On a CloudLab Ubuntu 20.04 machine:
