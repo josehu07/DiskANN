@@ -29,6 +29,13 @@ run_search () {
     ./tests/search_disk_index  --data_type float --dist_fn l2 --index_path_prefix "$fn"_learn_R32_L50_A1.2 --query_file fn_query.fbin  --gt_file "$fn"_query_learn_gt100 -K 10 -L 10 20 30 40 50 100 --result_path "$fn"/res --num_nodes_to_cache 10000
 }
 
+help () {
+    echo "USAGES:"
+    echo "to generate input binary: ./run_test.sh to_bin fvecs_path [max_npts]"
+    echo "to build on disk index:   ./run_test.sh build fbin_path"
+    echo "to test index searching:  ./run_test.sh search true|false(is debug) true|false(is tensorstore)"
+}
+
 if [ "$1" = "to_bin" ]; then
     echo "to binary"
     to_bin $2 $3
@@ -36,7 +43,7 @@ elif [ "$1" = "build" ]; then
     echo "build index"
     run_build $2
     #run_build $2 $3
-elif [ "$1" = "search_original" ]; then
+elif [ "$1" = "search" ]; then
     echo "test search"
     run_search $2 $3 $4
 fi
