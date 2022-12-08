@@ -6,13 +6,9 @@ UW-Madison CS744, Fall 2022
 
 Benefits of using TensorStore as the index storage backend:
 * Shareable index files across multiple array formats with a uniform API
-    * Port to TensorStore zarr with nothing fancy, compare
-* Automatic handling of data caching
-    * Change to use TensorStore caching, compare
 * Asynchronous I/O for high-throughput access
-    * Maybe? Identify async. I/O opportunities
+* Automatic handling of data caching
 * Controlled concurrent I/O with remote storage backend
-    * Future work
 
 ## Build
 
@@ -33,6 +29,14 @@ Note that Internet connection is required for the build, as the CMake involves G
 ## Run
 
 TODO
+
+## TODO List
+
+- [x] Converter from disk index to zarr tensors
+- [ ] Search path tensorstore reader integration
+- [ ] Allow turning on/off async I/O patterns for comparison
+- [ ] Allow turning on/off tensorstore cache pool for comparison (currently sees no effect, needs further study)
+- [ ] Using a remote, disaggregated storage backend (future work)
 
 
 # DiskANN - Original README

@@ -266,6 +266,10 @@ void convert_disk_index_to_tensors(const std::string& disk_index_filename,
             << "  append reorder:     " << append_reorder_data << std::endl
             << "  file size:          " << file_size << std::endl;
 
+  if (append_reorder_data)
+    throw TensorStoreANNException(
+        "reorder_data feature not supported on tensors backend");
+
   // open tensorstore tensors
   auto context = ts::Context::Default();
 

@@ -358,6 +358,7 @@ cscope*
 
 build/
 build-debug/
+scripts/tmp
 
 .vscode/
 /*BaseKit*.sh

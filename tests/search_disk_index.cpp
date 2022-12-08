@@ -54,6 +54,7 @@ void print_stats(std::string category, std::vector<float> percentiles,
 template<typename T>
 int search_disk_index(
     diskann::Metric& metric, const std::string& index_path_prefix,
+    const std::string& index_tensors_prefix, bool use_tensors,
     const std::string& result_output_prefix, const std::string& query_file,
     std::string& gt_file, const unsigned num_threads, const unsigned recall_at,
     const unsigned beamwidth, const unsigned num_nodes_to_cache,
@@ -285,8 +286,8 @@ int search_disk_index(
 }
 
 int main(int argc, char** argv) {
-  std::string data_type, dist_fn, index_path_prefix, result_path_prefix,
-      query_file, gt_file;
+  std::string data_type, dist_fn, index_path_prefix, index_tensors_prefix,
+      result_path_prefix, query_file, gt_file;
   unsigned              num_threads, K, W, num_nodes_to_cache, search_io_limit;
   std::vector<unsigned> Lvec;
   bool                  use_reorder_data = false;
@@ -302,6 +303,9 @@ int main(int argc, char** argv) {
     desc.add_options()("index_path_prefix",
                        po::value<std::string>(&index_path_prefix)->required(),
                        "Path prefix to the index");
+    desc.add_options()("index_tensors_prefix",
+                       po::value<std::string>(&index_tensors_prefix),
+                       "Path prefix to tensorstore tensors");
     desc.add_options()("result_path",
                        po::value<std::string>(&result_path_prefix)->required(),
                        "Path prefix for saving results of the queries");
@@ -379,22 +383,40 @@ int main(int argc, char** argv) {
     return -1;
   }
 
+  bool use_tensors = false;
+  if (!index_tensors_prefix.empty()) {
+    std::cout << "Option --index_tensors_prefix is set, using tensors backend."
+              << std::endl;
+    use_tensors = true;
+  }
+  if (use_reorder_data && use_tensors) {
+    std::cout << "Error: Reorder data is not compatible with tensors backend."
+              << std::endl;
+    return -1;
+  }
+  if (data_type != std::string("float") && use_tensors) {
+    std::cout << "Error: Search on tensors backend currently only supports "
+                 "float data type."
+              << std::endl;
+    return -1;
+  }
+
   try {
     if (data_type == std::string("float"))
-      return search_disk_index<float>(metric, index_path_prefix,
-                                      result_path_prefix, query_file, gt_file,
-                                      num_threads, K, W, num_nodes_to_cache,
-                                      search_io_limit, Lvec, use_reorder_data);
+      return search_disk_index<float>(
+          metric, index_path_prefix, index_tensors_prefix, use_tensors,
+          result_path_prefix, query_file, gt_file, num_threads, K, W,
+          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data);
     else if (data_type == std::string("int8"))
-      return search_disk_index<int8_t>(metric, index_path_prefix,
-                                       result_path_prefix, query_file, gt_file,
-                                       num_threads, K, W, num_nodes_to_cache,
-                                       search_io_limit, Lvec, use_reorder_data);
+      return search_disk_index<int8_t>(
+          metric, index_path_prefix, index_tensors_prefix, use_tensors,
+          result_path_prefix, query_file, gt_file, num_threads, K, W,
+          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data);
     else if (data_type == std::string("uint8"))
       return search_disk_index<uint8_t>(
-          metric, index_path_prefix, result_path_prefix, query_file, gt_file,
-          num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
-          use_reorder_data);
+          metric, index_path_prefix, index_tensors_prefix, use_tensors,
+          result_path_prefix, query_file, gt_file, num_threads, K, W,
+          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data);
     else {
       std::cerr << "Unsupported data type. Use float or int8 or uint8"
                 << std::endl;
