@@ -67,6 +67,15 @@ add_executable(create_disk_layout create_disk_layout.cpp)
 target_link_libraries(create_disk_layout ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
 
 
+add_executable(disk_index_to_tensors disk_index_to_tensors.cpp)
+target_compile_options(disk_index_to_tensors PUBLIC -Wno-unused-parameter)
+target_link_libraries(disk_index_to_tensors ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} tensorstore::tensorstore tensorstore::all_drivers)
+
+add_executable(diff_disk_index_tensors diff_disk_index_tensors.cpp)
+target_compile_options(diff_disk_index_tensors PUBLIC -Wno-unused-parameter)
+target_link_libraries(diff_disk_index_tensors ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} tensorstore::tensorstore tensorstore::all_drivers)
+
+
 # formatter
 #if (LINUX)
 #	add_custom_command(TARGET gen_random_slice PRE_BUILD COMMAND clang-format -i ../../../include/*.h ../../../include/dll/*.h ../../../src/*.cpp  ../../../tests/*.cpp ../../../src/dll/*.cpp ../../../tests/utils/*.cpp)

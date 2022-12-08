@@ -21,19 +21,30 @@ run_build () {
 
 #args: index_file use_debug use_ts
 run_search () {
-    fn=$1
-    use_debug=$2
-    use_ts=$3
+    dn=$1
+    use_ts=$2
+    use_debug=$3
 
+    if [ ! -d $dn ]; then
     mkdir $fn
-    ./tests/search_disk_index  --data_type float --dist_fn l2 --index_path_prefix "$fn"_learn_R32_L50_A1.2 --query_file fn_query.fbin  --gt_file "$fn"_query_learn_gt100 -K 10 -L 10 20 30 40 50 100 --result_path "$fn"/res --num_nodes_to_cache 10000
+    fi
+
+    if [ "$use_ts" = "ts" ]; then
+        echo "tensorstore search not implemented"
+    else
+        if [ "$use_debug" = "debug" ]; then
+            ~/DiskANN/build-debug/tests/search_disk_index  --data_type float --dist_fn l2 --index_path_prefix "$fn"_learn_R32_L50_A1.2 --query_file fn_query.fbin  --gt_file "$fn"_query_learn_gt100 -K 10 -L 10 20 30 40 50 100 --result_path "$fn"/res --num_nodes_to_cache 10000
+        else
+           ~/DiskANN/build/tests/search_disk_index  --data_type float --dist_fn l2 --index_path_prefix "$fn"_learn_R32_L50_A1.2 --query_file fn_query.fbin  --gt_file "$fn"_query_learn_gt100 -K 10 -L 10 20 30 40 50 100 --result_path "$fn"/res --num_nodes_to_cache 10000
+        fi
+    fi
 }
 
 help () {
-    echo "USAGES:"
-    echo "to generate input binary: ./run_test.sh to_bin fvecs_path [max_npts]"
-    echo "to build on disk index:   ./run_test.sh build fbin_path"
-    echo "to test index searching:  ./run_test.sh search true|false(is debug) true|false(is tensorstore)"
+    echo 'USAGES:'
+    echo -e 'to generate input binary with fvecs file name(not including "_base.fvecs"):\n\t ./run_test.sh to_bin fvecs_path [#max_npts]'
+    echo -e 'to build on disk index with fbin file name(not including ".fbin"):\n\t  ./run_test.sh build fbin_path'
+    echo -e 'to test index searching with base implementation or tensorstore, with or without debug mode:\n\t ./run_test.sh search base|ts [debug]'
 }
 
 if [ "$1" = "to_bin" ]; then
@@ -46,4 +57,6 @@ elif [ "$1" = "build" ]; then
 elif [ "$1" = "search" ]; then
     echo "test search"
     run_search $2 $3 $4
+elif [ "$1" = "help" ]; then
+    help
 fi

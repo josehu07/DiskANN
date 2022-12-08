@@ -30,7 +30,7 @@ make -j$(nproc)
 
 Note that Internet connection is required for the build, as the CMake involves Google's `FetchContent` utility, which will download `tensorstore` from our forked GitHub repo and its dependencies over the network.
 
-## TODO
+## Run
 
 TODO
 

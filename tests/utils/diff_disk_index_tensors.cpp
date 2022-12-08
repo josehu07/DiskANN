@@ -12,7 +12,7 @@ namespace ts = tensorstore;
 
 // TODO: simply setting "cache_pool" parameter seems to have no effect
 static constexpr size_t TENSORSTORE_CACHE_POOL_SIZE = 1000000000;  // ~1GB
-static constexpr size_t WRITE_BUFFER_TOTAL_LIMIT = 100000000;      // ~100MB
+static constexpr size_t READ_BATCH_TOTAL_LIMIT = 100000000;        // ~100MB
 
 /**
  * Custom exception type.
@@ -85,8 +85,7 @@ static ts::TensorStore<V> open_tensorstore(ts::Context&                context,
            {"kvstore", {{"driver", "file"}, {"path", filename}}},
            {"cache_pool", {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
            {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
-          context, ts::OpenMode::create | ts::OpenMode::delete_existing,
-          ts::ReadWriteMode::write)
+          context, ts::OpenMode::open, ts::ReadWriteMode::read)
           .result();
   if (!open_result.ok())
     throw TensorStoreANNException("failed to open TensorStore instance: " +
@@ -96,24 +95,21 @@ static ts::TensorStore<V> open_tensorstore(ts::Context&                context,
 }
 
 template<typename V>
-static void tensor2d_write_slices(ts::TensorStore<V>& store, int64_t dim,
-                                  size_t idx_beg, size_t idx_end, V* data,
-                                  size_t len) {
-  assert(idx_end > idx_beg);
-  auto array = ts::Array<V>(data, {static_cast<int64_t>(idx_end - idx_beg),
-                                   static_cast<int64_t>(len)});
-
+static auto tensor2d_read_slices(ts::TensorStore<V>& store, int64_t dim,
+                                 size_t idx_beg, size_t idx_end) {
   // TODO: maybe utilize async I/O?
-  auto write_result = ts::Write(ts::UnownedToShared(array),
-                                store | ts::Dims(dim).HalfOpenInterval(
-                                            static_cast<int64_t>(idx_beg),
-                                            static_cast<int64_t>(idx_end)))
-                          .result();
-  if (!write_result.ok())
+  auto read_result =
+      ts::Read<ts::zero_origin>(
+          store | ts::Dims(dim).HalfOpenInterval(static_cast<int64_t>(idx_beg),
+                                                 static_cast<int64_t>(idx_end)))
+          .result();
+  if (!read_result.ok())
     throw TensorStoreANNException(
-        "failed to write to tensor " + std::to_string(dim) + "[" +
+        "failed to read to tensor " + std::to_string(dim) + "[" +
         std::to_string(idx_beg) + ":" + std::to_string(idx_end) +
-        "]: " + write_result.status().ToString());
+        "]: " + read_result.status().ToString());
+
+  return read_result.value();
 }
 
 /**
@@ -130,7 +126,7 @@ static constexpr size_t DISK_INDEX_SECTOR_LEN = 4096;
  * Data sectors sweeper.
  */
 template<typename V>
-static void convert_points_data(std::ifstream&             disk_index_file,
+static void compare_points_data(std::ifstream&             disk_index_file,
                                 ts::TensorStore<V>&        store_embedding,
                                 ts::TensorStore<unsigned>& store_num_nbrs,
                                 ts::TensorStore<unsigned>& store_nbrhood,
@@ -140,8 +136,8 @@ static void convert_points_data(std::ifstream&             disk_index_file,
   char*  sector_buf = new char[DISK_INDEX_SECTOR_LEN];
   size_t done_pts = 0, buffer_pts = 0, buffer_start = 0;
 
-  // use write batching
-  size_t num_pts_to_buffer = WRITE_BUFFER_TOTAL_LIMIT / max_pt_len;
+  // use read batching
+  size_t num_pts_to_buffer = READ_BATCH_TOTAL_LIMIT / max_pt_len;
   if (num_pts_to_buffer > num_pts)
     num_pts_to_buffer = num_pts;
   assert(num_pts_to_buffer > 0);
@@ -149,19 +145,98 @@ static void convert_points_data(std::ifstream&             disk_index_file,
   unsigned* num_nbrs_buf = new unsigned[num_pts_to_buffer];
   unsigned* nbrhood_buf = new unsigned[max_nbrs_per_pt * num_pts_to_buffer];
 
-  auto dump_write_buffers = [&]() {
-    tensor2d_write_slices<V>(store_embedding, 0, buffer_start,
-                             buffer_start + buffer_pts, embedding_buf,
-                             num_dims);
-    tensor2d_write_slices<unsigned>(store_num_nbrs, 0, buffer_start,
-                                    buffer_start + buffer_pts, num_nbrs_buf, 1);
-    tensor2d_write_slices<unsigned>(store_nbrhood, 0, buffer_start,
-                                    buffer_start + buffer_pts, nbrhood_buf,
-                                    max_nbrs_per_pt);
+  auto compare_points_batch = [&]() {
+    // read the corresponding array slices from tensors
+    auto embedding_array = tensor2d_read_slices<V>(
+        store_embedding, 0, buffer_start, buffer_start + buffer_pts);
+    auto num_nbrs_array = tensor2d_read_slices<unsigned>(
+        store_num_nbrs, 0, buffer_start, buffer_start + buffer_pts);
+    auto nbrhood_array = tensor2d_read_slices<unsigned>(
+        store_nbrhood, 0, buffer_start, buffer_start + buffer_pts);
+
+    // compare embedding
+    if (embedding_array.rank() != 2)
+      throw TensorStoreANNException(
+          "embedding array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong rank: " + std::to_string(embedding_array.rank()));
+    if (embedding_array.shape()[0] != buffer_pts)
+      throw TensorStoreANNException(
+          "embedding array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong #points: " + std::to_string(embedding_array.shape()[0]));
+    if (embedding_array.shape()[1] != num_dims)
+      throw TensorStoreANNException(
+          "embedding array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong #values: " + std::to_string(embedding_array.shape()[1]));
+    for (size_t p = 0; p < buffer_pts; ++p) {
+      for (size_t j = 0; j < num_dims; ++j) {
+        if (embedding_array.data()[p * num_dims + j] !=
+            embedding_buf[p * num_dims + j])
+          throw TensorStoreANNException(
+              "embedding array [" + std::to_string(buffer_start + p) +
+              "] wrong value @ " + std::to_string(j) + ": " +
+              std::to_string(embedding_array.data()[p * num_dims + j]) +
+              " vs. " + std::to_string(embedding_buf[p * num_dims + j]));
+      }
+    }
+
+    // compare num_nbrs
+    if (num_nbrs_array.rank() != 2)
+      throw TensorStoreANNException(
+          "num_nbrs array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong rank: " + std::to_string(num_nbrs_array.rank()));
+    if (num_nbrs_array.shape()[0] != buffer_pts)
+      throw TensorStoreANNException(
+          "num_nbrs array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong #points: " + std::to_string(num_nbrs_array.shape()[0]));
+    if (num_nbrs_array.shape()[1] != 1)
+      throw TensorStoreANNException(
+          "num_nbrs array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong #values: " + std::to_string(num_nbrs_array.shape()[1]));
+    for (size_t p = 0; p < buffer_pts; ++p) {
+      if (num_nbrs_array.data()[p] != num_nbrs_buf[p])
+        throw TensorStoreANNException(
+            "num_nbrs array [" + std::to_string(buffer_start + p) +
+            "] wrong value @ : " + std::to_string(num_nbrs_array.data()[p]) +
+            " vs. " + std::to_string(num_nbrs_buf[p]));
+    }
+
+    // compare nbrhood
+    if (nbrhood_array.rank() != 2)
+      throw TensorStoreANNException(
+          "nbrhood array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong rank: " + std::to_string(nbrhood_array.rank()));
+    if (nbrhood_array.shape()[0] != buffer_pts)
+      throw TensorStoreANNException(
+          "nbrhood array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong #points: " + std::to_string(nbrhood_array.shape()[0]));
+    if (nbrhood_array.shape()[1] != max_nbrs_per_pt)
+      throw TensorStoreANNException(
+          "nbrhood array [" + std::to_string(buffer_start) + ":" +
+          std::to_string(buffer_start + buffer_pts) +
+          "] wrong #values: " + std::to_string(nbrhood_array.shape()[1]));
+    for (size_t p = 0; p < buffer_pts; ++p) {
+      for (size_t j = 0; j < max_nbrs_per_pt; ++j) {
+        if (nbrhood_array.data()[p * max_nbrs_per_pt + j] !=
+            nbrhood_buf[p * max_nbrs_per_pt + j])
+          throw TensorStoreANNException(
+              "nbrhood array [" + std::to_string(buffer_start + p) +
+              "] wrong value @ " + std::to_string(j) + ": " +
+              std::to_string(nbrhood_array.data()[p * max_nbrs_per_pt + j]) +
+              " vs. " + std::to_string(nbrhood_buf[p * max_nbrs_per_pt + j]));
+      }
+    }
   };
 
-  // loop through all points in input binary disk index, gather in write buffer
-  // and dump into tensorstore tensors
+  // loop through all points in input binary disk index, gather in buffer
+  // when batch is full, read out corresponding arrays from tensors and compare
   while (done_pts < num_pts) {
     size_t sector_pts = num_pts_per_sector;
     if (done_pts + sector_pts > num_pts)
@@ -177,7 +252,7 @@ static void convert_points_data(std::ifstream&             disk_index_file,
       buf_cursor += sizeof(unsigned);
       unsigned* nbrhood = reinterpret_cast<unsigned*>(buf_cursor);
 
-      // copy into write buffer
+      // copy into read batch
       memcpy(embedding_buf + num_dims * buffer_pts, embedding,
              sizeof(V) * num_dims);
       memcpy(num_nbrs_buf + buffer_pts, &num_nbrs, sizeof(unsigned));
@@ -186,22 +261,22 @@ static void convert_points_data(std::ifstream&             disk_index_file,
       done_pts++;
       buffer_pts++;
 
-      // if write buffer full, dump to tensors
+      // if read batch full, compare with arrays in tensors
       if (buffer_pts == num_pts_to_buffer) {
-        dump_write_buffers();
+        compare_points_batch();
         buffer_start += buffer_pts;
         buffer_pts = 0;
       }
 
       if (done_pts % num_pts_to_buffer == 0)
-        std::cout << "  converted " << done_pts << " points..." << std::endl;
+        std::cout << "  compared " << done_pts << " points..." << std::endl;
     }
   }
 
   if (buffer_pts > 0)
-    dump_write_buffers();
+    compare_points_batch();
 
-  std::cout << "  conversion of " << num_pts << " points DONE" << std::endl;
+  std::cout << "  comparison of " << num_pts << " points SUCCESS" << std::endl;
   delete[] sector_buf;
   delete[] embedding_buf;
   delete[] num_nbrs_buf;
@@ -212,8 +287,9 @@ static void convert_points_data(std::ifstream&             disk_index_file,
  * Main body.
  */
 template<typename V>
-void convert_disk_index_to_tensors(const std::string& disk_index_filename,
-                                   const std::string& tensors_filename_prefix) {
+void compare_disk_index_and_tensors(
+    const std::string& disk_index_filename,
+    const std::string& tensors_filename_prefix) {
   // open binary file
   std::ifstream disk_index_file;
   size_t        disk_index_filesize;
@@ -251,6 +327,7 @@ void convert_disk_index_to_tensors(const std::string& disk_index_filename,
         "disk_index metadata filesize field mismatch: " +
         std::to_string(file_size) + " vs. " +
         std::to_string(disk_index_filesize));
+
   uint64_t max_nbrs_per_pt =
       (max_pt_len - num_dims * sizeof(V) - sizeof(unsigned)) / sizeof(unsigned);
 
@@ -306,10 +383,10 @@ void convert_disk_index_to_tensors(const std::string& disk_index_filename,
             << "               dtype:          " << store_nbrhood.dtype()
             << std::endl;
 
-  // read sectors one by one, extract all nodes data
+  // read sectors one by one, extract nodes data and compare with tensorstore
   disk_index_file.seekg(DISK_INDEX_SECTOR_LEN, std::ios::beg);
-  std::cout << "Converting embedding & neighborhood data --" << std::endl;
-  convert_points_data<V>(disk_index_file, store_embedding, store_num_nbrs,
+  std::cout << "Comparing embedding & neighborhood data --" << std::endl;
+  compare_points_data<V>(disk_index_file, store_embedding, store_num_nbrs,
                          store_nbrhood, num_pts, num_pts_per_sector, max_pt_len,
                          num_dims, max_nbrs_per_pt);
 }
@@ -328,14 +405,14 @@ int main(int argc, char* argv[]) {
   std::string tensors_filename_prefix(argv[3]);
 
   if (data_type == "float")
-    convert_disk_index_to_tensors<float>(disk_index_filename,
-                                         tensors_filename_prefix);
-  else if (data_type == "int8")
-    convert_disk_index_to_tensors<int8_t>(disk_index_filename,
+    compare_disk_index_and_tensors<float>(disk_index_filename,
                                           tensors_filename_prefix);
-  else if (data_type == "uint8")
-    convert_disk_index_to_tensors<uint8_t>(disk_index_filename,
+  else if (data_type == "int8")
+    compare_disk_index_and_tensors<int8_t>(disk_index_filename,
                                            tensors_filename_prefix);
+  else if (data_type == "uint8")
+    compare_disk_index_and_tensors<uint8_t>(disk_index_filename,
+                                            tensors_filename_prefix);
   else
     throw TensorStoreANNException("unsupported data type: " + data_type);
 
