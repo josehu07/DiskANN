@@ -29,7 +29,7 @@ class TensorStoreANNException : public std::exception {
 struct TensorsPointSliceRead {
   size_t    pt_idx;
   float*    embedding_buf;
-  unsigned  num_nbrs_buf;
+  unsigned* num_nbrs_buf;
   unsigned* nbrhood_buf;
 };
 
@@ -51,7 +51,8 @@ class TensorStoreSliceReader {
   // process batch of tensorstore slices read requests in parallel
   // NOTE :: blocking call
   void read(std::vector<std::vector<TensorsPointSliceRead>>& read_reqs,
-            bool                                             async = false);
+            bool async = false, bool skip_embedding = false,
+            bool skip_neighbors = false);
 };
 
 #endif

@@ -114,6 +114,7 @@ namespace diskann {
                              // PQ for disk data (very large dimensionality)
     _u64 aligned_dim = 0;
     _u64 disk_bytes_per_point = 0;
+    _u64 max_nbrs_per_pt = 0;
 
     std::string disk_index_file;
     std::string index_tensors_prefix;

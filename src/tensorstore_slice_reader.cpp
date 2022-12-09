@@ -12,6 +12,8 @@
 #include "tensorstore/index_space/dim_expression.h"
 
 namespace {
+  static constexpr size_t TENSORSTORE_CACHE_POOL_SIZE = 1000000000;  // ~1GB
+
   template<typename V>
   static ts::TensorStore<V> open_tensorstore(ts::Context       &context,
                                              const std::string &filename,
@@ -31,8 +33,8 @@ namespace {
     auto open_result =
         ts::Open<V>({{"driver", "zarr"},
                      {"kvstore", {{"driver", "file"}, {"path", filename}}},
-                     //  {"cache_pool",
-                     //   {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
+                     {"cache_pool",
+                      {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
                      {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
                     context, ts::OpenMode::open, ts::ReadWriteMode::read)
             .result();
@@ -73,9 +75,12 @@ namespace {
 
     // copy data to buffers
     size_t num_elems_per_buf = array.shape()[1];
-    for (size_t i = 0; i < bufs.size(); ++i)
-      memcpy(bufs[i], &array.data()[i * num_elems_per_buf],
-             num_elems_per_buf * sizeof(V));
+    for (size_t i = 0; i < bufs.size(); ++i) {
+      if (bufs[i] != nullptr) {
+        memcpy(bufs[i], &array.data()[i * num_elems_per_buf],
+               num_elems_per_buf * sizeof(V));
+      }
+    }
   }
 }  // namespace
 
@@ -112,7 +117,8 @@ void TensorStoreSliceReader::open(const std::string &tensors_filename_prefix,
 }
 
 void TensorStoreSliceReader::read(
-    std::vector<std::vector<TensorsPointSliceRead>> &read_reqs, bool async) {
+    std::vector<std::vector<TensorsPointSliceRead>> &read_reqs, bool async,
+    bool skip_embedding, bool skip_neighbors) {
   // inner vector is a list of slice indexes to be read in one shot
   // outer vector is a list of such read calls that could be done sync/async
   size_t num_reqs = read_reqs.size();
@@ -144,9 +150,7 @@ void TensorStoreSliceReader::read(
     num_nbrs_bufs.emplace_back();
     std::transform(req.begin(), req.end(),
                    std::back_inserter(num_nbrs_bufs.back()),
-                   [](TensorsPointSliceRead &req) -> unsigned * {
-                     return &req.num_nbrs_buf;
-                   });
+                   std::mem_fn(&TensorsPointSliceRead::num_nbrs_buf));
     nbrhood_bufs.emplace_back();
     std::transform(req.begin(), req.end(),
                    std::back_inserter(nbrhood_bufs.back()),
@@ -154,39 +158,47 @@ void TensorStoreSliceReader::read(
   }
 
   for (size_t i = 0; i < num_reqs; ++i) {
-    auto embedding_future =
-        tensor2d_submit_read_slice<float>(store_embedding, 0, pt_idxs[i]);
-    if (!async)
-      tensor2d_resolve_read_future<float>(std::move(embedding_future),
-                                          embedding_bufs[i]);
-    else
-      embedding_futures.push_back(std::move(embedding_future));
+    if (!skip_embedding) {
+      auto embedding_future =
+          tensor2d_submit_read_slice<float>(store_embedding, 0, pt_idxs[i]);
+      if (!async)
+        tensor2d_resolve_read_future<float>(std::move(embedding_future),
+                                            embedding_bufs[i]);
+      else
+        embedding_futures.push_back(std::move(embedding_future));
+    }
 
-    auto num_nbrs_future =
-        tensor2d_submit_read_slice<unsigned>(store_num_nbrs, 0, pt_idxs[i]);
-    if (!async)
-      tensor2d_resolve_read_future<unsigned>(std::move(num_nbrs_future),
-                                             num_nbrs_bufs[i]);
-    else
-      num_nbrs_futures.push_back(std::move(num_nbrs_future));
+    if (!skip_neighbors) {
+      auto num_nbrs_future =
+          tensor2d_submit_read_slice<unsigned>(store_num_nbrs, 0, pt_idxs[i]);
+      if (!async)
+        tensor2d_resolve_read_future<unsigned>(std::move(num_nbrs_future),
+                                               num_nbrs_bufs[i]);
+      else
+        num_nbrs_futures.push_back(std::move(num_nbrs_future));
 
-    auto nbrhood_future =
-        tensor2d_submit_read_slice<unsigned>(store_nbrhood, 0, pt_idxs[i]);
-    if (!async)
-      tensor2d_resolve_read_future<unsigned>(std::move(nbrhood_future),
-                                             nbrhood_bufs[i]);
-    else
-      nbrhood_futures.push_back(std::move(nbrhood_future));
+      auto nbrhood_future =
+          tensor2d_submit_read_slice<unsigned>(store_nbrhood, 0, pt_idxs[i]);
+      if (!async)
+        tensor2d_resolve_read_future<unsigned>(std::move(nbrhood_future),
+                                               nbrhood_bufs[i]);
+      else
+        nbrhood_futures.push_back(std::move(nbrhood_future));
+    }
   }
 
   if (async) {
     for (size_t i = 0; i < num_reqs; ++i) {
-      tensor2d_resolve_read_future<float>(std::move(embedding_futures[i]),
-                                          embedding_bufs[i]);
-      tensor2d_resolve_read_future<unsigned>(std::move(num_nbrs_futures[i]),
-                                             num_nbrs_bufs[i]);
-      tensor2d_resolve_read_future<unsigned>(std::move(nbrhood_futures[i]),
-                                             nbrhood_bufs[i]);
+      if (!skip_embedding) {
+        tensor2d_resolve_read_future<float>(std::move(embedding_futures[i]),
+                                            embedding_bufs[i]);
+      }
+      if (!skip_neighbors) {
+        tensor2d_resolve_read_future<unsigned>(std::move(num_nbrs_futures[i]),
+                                               num_nbrs_bufs[i]);
+        tensor2d_resolve_read_future<unsigned>(std::move(nbrhood_futures[i]),
+                                               nbrhood_bufs[i]);
+      }
     }
   }
 }
