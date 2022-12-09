@@ -47,7 +47,10 @@ namespace {
   static auto tensor2d_submit_read_slice(ts::TensorStore<V> &store, int64_t dim,
                                          const std::vector<int64_t> &idxs) {
     return ts::Read<ts::zero_origin>(
-        store | ts::Dims(dim).IndexArraySlice(ts::Array<ts::Index>(idxs)));
+        store |
+        ts::Dims(dim).IndexArraySlice(ts::UnownedToShared(
+            ts::Array<ts::Index>(const_cast<int64_t *>(idxs.data()),
+                                 {static_cast<int64_t>(idxs.size())}))));
   }
 
   template<typename V>
