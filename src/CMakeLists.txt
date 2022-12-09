@@ -8,10 +8,12 @@ if(MSVC)
 else()
     #file(GLOB CPP_SOURCES *.cpp)
     set(CPP_SOURCES ann_exception.cpp disk_utils.cpp distance.cpp index.cpp
-        linux_aligned_file_reader.cpp math_utils.cpp natural_number_map.cpp
-        natural_number_set.cpp memory_mapper.cpp partition.cpp pq.cpp
-        pq_flash_index.cpp scratch.cpp logger.cpp utils.cpp)
+        linux_aligned_file_reader.cpp tensorstore_slice_reader.cpp math_utils.cpp
+        natural_number_map.cpp natural_number_set.cpp memory_mapper.cpp partition.cpp
+        pq.cpp pq_flash_index.cpp scratch.cpp logger.cpp utils.cpp)
     add_library(${PROJECT_NAME} ${CPP_SOURCES})
+    target_link_libraries(${PROJECT_NAME} tensorstore::tensorstore tensorstore::all_drivers)
     add_library(${PROJECT_NAME}_s STATIC ${CPP_SOURCES})
+    target_link_libraries(${PROJECT_NAME}_s tensorstore::tensorstore tensorstore::all_drivers)
 endif()
 install()

@@ -1,4 +1,73 @@
-# DiskANN
+# DiskANN with TensorStore Backend
+
+UW-Madison CS744, Fall 2022
+
+![TensorStoreANN](TensorStoreANN.png)
+
+Benefits of using TensorStore as the index storage backend:
+* Shareable index files across multiple array formats with a uniform API
+* Asynchronous I/O for high-throughput access
+* Automatic handling of data caching
+* Controlled concurrent I/O with remote storage backend
+
+## Build
+
+On a CloudLab Ubuntu 20.04 machine:
+
+* Install necessary DiskANN dependencies (see original README below)
+* Install `gcc` suite version >=10.x and set as default
+* Install `cmake` version >= 3.24
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+```
+
+Note that Internet connection is required for the build, as the CMake involves Google's `FetchContent` utility, which will download `tensorstore` from our forked GitHub repo and its dependencies over the network.
+
+## Run
+
+For help messages:
+
+```bash
+./scripts/run.py [subcommand] -h
+```
+
+Parse Sift dataset fvecs into fbin format:
+
+```bash
+./scripts/run.py to_fbin --sift_base /mnt/ssd/data/sift-small/siftsmall --dataset /mnt/ssd/data/sift-tiny/sifttiny [--max_npts 1000]
+```
+
+Build on-disk index from learning input (may take very long):
+
+```bash
+./scripts/run.py build --dataset /mnt/ssd/data/sift-tiny/sifttiny
+```
+
+Convert on-disk index to zarr format tensors:
+
+```bash
+./scripts/run.py convert --dataset /mnt/ssd/data/sift-tiny/sifttiny
+```
+
+Run queries with different parameters:
+
+```bash
+./scripts/run.py query --dataset /mnt/ssd/data/sift-tiny/sifttiny [--k_depth 10] [--npts_to_cache 100] [--use_ts] [--ts_async] [-L 10 50 100]
+```
+
+## TODO List
+
+- [x] Converter from disk index to zarr tensors
+- [x] Search path tensorstore reader integration
+- [x] Allow turning on/off async I/O patterns for comparison
+- [ ] Allow turning on/off tensorstore cache pool for comparison (currently sees no effect, needs further study)
+- [ ] Using a remote, disaggregated storage backend (future work)
+
+
+# DiskANN - Original README
 
 The goal of the project is to build scalable, performant, streaming and cost-effective approximate nearest neighbor search algorithms for trillion-scale vector search.
 This release has the code from the [DiskANN paper](https://papers.nips.cc/paper/9527-rand-nsg-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node.pdf) published in NeurIPS 2019, 

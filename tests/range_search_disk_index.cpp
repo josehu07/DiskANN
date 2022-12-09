@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "linux_aligned_file_reader.h"
+#include "tensorstore_slice_reader.h"
 #else
 #ifdef USE_BING_INFRA
 #include "bing_aligned_file_reader.h"
@@ -88,7 +89,8 @@ int search_disk_index(diskann::Metric&   metric,
     calc_recall_flag = true;
   }
 
-  std::shared_ptr<AlignedFileReader> reader = nullptr;
+  std::shared_ptr<AlignedFileReader>      reader = nullptr;
+  std::shared_ptr<TensorStoreSliceReader> tensor_reader = nullptr;
 #ifdef _WINDOWS
 #ifndef USE_BING_INFRA
   reader.reset(new WindowsAlignedFileReader());
@@ -100,7 +102,7 @@ int search_disk_index(diskann::Metric&   metric,
 #endif
 
   std::unique_ptr<diskann::PQFlashIndex<T>> _pFlashIndex(
-      new diskann::PQFlashIndex<T>(reader, metric));
+      new diskann::PQFlashIndex<T>(reader, tensor_reader, metric));
 
   int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str());
 
