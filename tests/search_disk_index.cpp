@@ -59,7 +59,7 @@ int search_disk_index(
     std::string& gt_file, const unsigned num_threads, const unsigned recall_at,
     const unsigned beamwidth, const unsigned num_nodes_to_cache,
     const _u32 search_io_limit, const std::vector<unsigned>& Lvec,
-    const bool use_reorder_data = false) {
+    const bool use_reorder_data = false, const bool use_tensors_async = false) {
   diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
   if (beamwidth <= 0)
     diskann::cout << "beamwidth to be optimized for each L value" << std::flush;
@@ -92,7 +92,8 @@ int search_disk_index(
     calc_recall_flag = true;
   }
 
-  std::shared_ptr<AlignedFileReader> reader = nullptr;
+  std::shared_ptr<AlignedFileReader>      reader = nullptr;
+  std::shared_ptr<TensorStoreSliceReader> tensor_reader = nullptr;
 #ifdef _WINDOWS
 #ifndef USE_BING_INFRA
   reader.reset(new WindowsAlignedFileReader());
@@ -101,12 +102,16 @@ int search_disk_index(
 #endif
 #else
   reader.reset(new LinuxAlignedFileReader());
+  if (use_tensors)
+    tensor_reader.reset(new TensorStoreSliceReader());
 #endif
 
   std::unique_ptr<diskann::PQFlashIndex<T>> _pFlashIndex(
-      new diskann::PQFlashIndex<T>(reader, metric));
+      new diskann::PQFlashIndex<T>(reader, tensor_reader, metric));
 
-  int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str());
+  int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str(),
+                               index_tensors_prefix.c_str(), use_tensors,
+                               use_tensors_async);
 
   if (res != 0) {
     return res;
@@ -291,6 +296,7 @@ int main(int argc, char** argv) {
   unsigned              num_threads, K, W, num_nodes_to_cache, search_io_limit;
   std::vector<unsigned> Lvec;
   bool                  use_reorder_data = false;
+  bool                  use_tensors_async = false;
 
   po::options_description desc{"Arguments"};
   try {
@@ -340,6 +346,9 @@ int main(int argc, char** argv) {
                        po::bool_switch()->default_value(false),
                        "Include full precision data in the index. Use only in "
                        "conjuction with compressed data on SSD.");
+    desc.add_options()("use_tensors_async",
+                       po::bool_switch()->default_value(false),
+                       "Use async I/O pattern for tensorstore backend.");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -350,6 +359,8 @@ int main(int argc, char** argv) {
     po::notify(vm);
     if (vm["use_reorder_data"].as<bool>())
       use_reorder_data = true;
+    if (vm["use_tensors_async"].as<bool>())
+      use_tensors_async = true;
   } catch (const std::exception& ex) {
     std::cerr << ex.what() << '\n';
     return -1;
@@ -406,17 +417,20 @@ int main(int argc, char** argv) {
       return search_disk_index<float>(
           metric, index_path_prefix, index_tensors_prefix, use_tensors,
           result_path_prefix, query_file, gt_file, num_threads, K, W,
-          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data);
+          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data,
+          use_tensors_async);
     else if (data_type == std::string("int8"))
       return search_disk_index<int8_t>(
           metric, index_path_prefix, index_tensors_prefix, use_tensors,
           result_path_prefix, query_file, gt_file, num_threads, K, W,
-          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data);
+          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data,
+          use_tensors_async);
     else if (data_type == std::string("uint8"))
       return search_disk_index<uint8_t>(
           metric, index_path_prefix, index_tensors_prefix, use_tensors,
           result_path_prefix, query_file, gt_file, num_threads, K, W,
-          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data);
+          num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data,
+          use_tensors_async);
     else {
       std::cerr << "Unsupported data type. Use float or int8 or uint8"
                 << std::endl;

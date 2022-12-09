@@ -10,6 +10,7 @@
 #include "tsl/robin_set.h"
 
 #include "aligned_file_reader.h"
+#include "tensorstore_slice_reader.h"
 #include "concurrent_queue.h"
 #include "neighbor.h"
 #include "parameters.h"
@@ -27,8 +28,9 @@ namespace diskann {
   class PQFlashIndex {
    public:
     DISKANN_DLLEXPORT PQFlashIndex(
-        std::shared_ptr<AlignedFileReader> &fileReader,
-        diskann::Metric                     metric = diskann::Metric::L2);
+        std::shared_ptr<AlignedFileReader>      &fileReader,
+        std::shared_ptr<TensorStoreSliceReader> &tensorReader,
+        diskann::Metric                          metric = diskann::Metric::L2);
     DISKANN_DLLEXPORT ~PQFlashIndex();
 
 #ifdef EXEC_ENV_OLS
@@ -36,7 +38,10 @@ namespace diskann {
                                uint32_t num_threads, const char *index_prefix);
 #else
     // load compressed data, and obtains the handle to the disk-resident index
-    DISKANN_DLLEXPORT int  load(uint32_t num_threads, const char *index_prefix);
+    DISKANN_DLLEXPORT int  load(uint32_t num_threads, const char *index_prefix,
+                                const char *index_tensors_prefix = nullptr,
+                                bool        use_tensors = false,
+                                bool        use_tensors_async = false);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
@@ -69,12 +74,13 @@ namespace diskann {
     DISKANN_DLLEXPORT _u32 range_search(const T *query1, const double range,
                                         const _u64          min_l_search,
                                         const _u64          max_l_search,
-                                        std::vector<_u64> & indices,
+                                        std::vector<_u64>  &indices,
                                         std::vector<float> &distances,
                                         const _u64          min_beam_width,
-                                        QueryStats *        stats = nullptr);
+                                        QueryStats         *stats = nullptr);
 
-    std::shared_ptr<AlignedFileReader> &reader;
+    std::shared_ptr<AlignedFileReader>      &reader;
+    std::shared_ptr<TensorStoreSliceReader> &tensor_reader;
 
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
@@ -109,7 +115,11 @@ namespace diskann {
     _u64 aligned_dim = 0;
     _u64 disk_bytes_per_point = 0;
 
-    std::string                        disk_index_file;
+    std::string disk_index_file;
+    std::string index_tensors_prefix;
+    bool        use_tensors;
+    bool        use_tensors_async;
+
     std::vector<std::pair<_u32, _u32>> node_visit_counter;
 
     // PQ data
@@ -117,7 +127,7 @@ namespace diskann {
     // data: _u8 * n_chunks
     // chunk_size = chunk size of each dimension chunk
     // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
-    _u8 *             data = nullptr;
+    _u8              *data = nullptr;
     _u64              n_chunks;
     FixedChunkPQTable pq_table;
 
@@ -143,11 +153,11 @@ namespace diskann {
     float *centroid_data = nullptr;
 
     // nhood_cache
-    unsigned *                                    nhood_cache_buf = nullptr;
+    unsigned                                     *nhood_cache_buf = nullptr;
     tsl::robin_map<_u32, std::pair<_u32, _u32 *>> nhood_cache;
 
     // coord_cache
-    T *                       coord_cache_buf = nullptr;
+    T                        *coord_cache_buf = nullptr;
     tsl::robin_map<_u32, T *> coord_cache;
 
     // thread-specific scratch
@@ -163,7 +173,7 @@ namespace diskann {
     // any additions we make to the header. This is an outer limit
     // on how big the header can be.
     static const int HEADER_SIZE = SECTOR_LEN;
-    char *           getHeaderBytes();
+    char            *getHeaderBytes();
 #endif
   };
 }  // namespace diskann

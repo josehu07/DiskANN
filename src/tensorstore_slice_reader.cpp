@@ -3,203 +3,187 @@
 #include <cassert>
 #include <cstdio>
 #include <iostream>
+#include <functional>
+#include <algorithm>
 #include "utils.h"
 
 #include "tensorstore/context.h"
 #include "tensorstore/open.h"
 #include "tensorstore/index_space/dim_expression.h"
 
-#define MAX_EVENTS 1024
-
 namespace {
-  typedef struct io_event io_event_t;
-  typedef struct iocb     iocb_t;
+  template<typename V>
+  static ts::TensorStore<V> open_tensorstore(ts::Context       &context,
+                                             const std::string &filename,
+                                             const std::vector<int64_t> &dims) {
+    std::string dtype_str;
+    if constexpr (std::is_same<V, float>::value)
+      dtype_str = "<f4";
+    else if constexpr (std::is_same<V, int8_t>::value)
+      dtype_str = "|i1";
+    else if constexpr (std::is_same<V, int32_t>::value)
+      dtype_str = "<i4";
+    else if constexpr (std::is_same<V, uint8_t>::value)
+      dtype_str = "|u1";
+    else if constexpr (std::is_same<V, uint32_t>::value)
+      dtype_str = "<u4";
 
-  void execute_io(io_context_t ctx, int fd, std::vector<AlignedRead> &read_reqs,
-                  uint64_t n_retries = 0) {
-#ifdef DEBUG
-    for (auto &req : read_reqs) {
-      assert(IS_ALIGNED(req.len, 512));
-      // std::cout << "request:"<<req.offset<<":"<<req.len << std::endl;
-      assert(IS_ALIGNED(req.offset, 512));
-      assert(IS_ALIGNED(req.buf, 512));
-      // assert(malloc_usable_size(req.buf) >= req.len);
-    }
-#endif
+    auto open_result =
+        ts::Open<V>({{"driver", "zarr"},
+                     {"kvstore", {{"driver", "file"}, {"path", filename}}},
+                     //  {"cache_pool",
+                     //   {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
+                     {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
+                    context, ts::OpenMode::open, ts::ReadWriteMode::read)
+            .result();
+    if (!open_result.ok())
+      throw TensorStoreANNException("failed to open TensorStore instance: " +
+                                    open_result.status().ToString());
 
-    // break-up requests into chunks of size MAX_EVENTS each
-    uint64_t n_iters = ROUND_UP(read_reqs.size(), MAX_EVENTS) / MAX_EVENTS;
-    for (uint64_t iter = 0; iter < n_iters; iter++) {
-      uint64_t n_ops =
-          std::min((uint64_t) read_reqs.size() - (iter * MAX_EVENTS),
-                   (uint64_t) MAX_EVENTS);
-      std::vector<iocb_t *>    cbs(n_ops, nullptr);
-      std::vector<io_event_t>  evts(n_ops);
-      std::vector<struct iocb> cb(n_ops);
-      for (uint64_t j = 0; j < n_ops; j++) {
-        io_prep_pread(cb.data() + j, fd, read_reqs[j + iter * MAX_EVENTS].buf,
-                      read_reqs[j + iter * MAX_EVENTS].len,
-                      read_reqs[j + iter * MAX_EVENTS].offset);
-      }
+    return std::move(open_result.value());
+  }
 
-      // initialize `cbs` using `cb` array
-      //
+  template<typename V>
+  static auto tensor2d_submit_read_slice(ts::TensorStore<V> &store, int64_t dim,
+                                         const std::vector<int64_t> &idxs) {
+    return ts::Read<ts::zero_origin>(
+        store | ts::Dims(dim).IndexArraySlice(ts::Array<ts::Index>(idxs)));
+  }
 
-      for (uint64_t i = 0; i < n_ops; i++) {
-        cbs[i] = cb.data() + i;
-      }
+  template<typename V>
+  static void tensor2d_resolve_read_future(
+      ts::Future<ts::Array<ts::Shared<V>>> future,
+      const std::vector<V *>              &bufs) {
+    auto read_result = future.result();
+    if (!read_result.ok())
+      throw TensorStoreANNException("failed to resolve read future: " +
+                                    read_result.status().ToString());
 
-      uint64_t n_tries = 0;
-      while (n_tries <= n_retries) {
-        // issue reads
-        int64_t ret = io_submit(ctx, (int64_t) n_ops, cbs.data());
-        // if requests didn't get accepted
-        if (ret != (int64_t) n_ops) {
-          std::cerr << "io_submit() failed; returned " << ret
-                    << ", expected=" << n_ops << ", ernno=" << errno << "="
-                    << ::strerror(-ret) << ", try #" << n_tries + 1;
-          std::cout << "ctx: " << ctx << "\n";
-          exit(-1);
-        } else {
-          // wait on io_getevents
-          ret = io_getevents(ctx, (int64_t) n_ops, (int64_t) n_ops, evts.data(),
-                             nullptr);
-          // if requests didn't complete
-          if (ret != (int64_t) n_ops) {
-            std::cerr << "io_getevents() failed; returned " << ret
-                      << ", expected=" << n_ops << ", ernno=" << errno << "="
-                      << ::strerror(-ret) << ", try #" << n_tries + 1;
-            exit(-1);
-          } else {
-            break;
-          }
-        }
-      }
-      // disabled since req.buf could be an offset into another buf
-      /*
-      for (auto &req : read_reqs) {
-        // corruption check
-        assert(malloc_usable_size(req.buf) >= req.len);
-      }
-      */
-    }
+    auto array = read_result.value();
+    if (array.rank() != 2)
+      throw TensorStoreANNException("data tensor's rank is not 2: " +
+                                    std::to_string(array.rank()));
+    if (array.shape()[0] != bufs.size())
+      throw TensorStoreANNException(
+          "buffers vector has mismatch size: " + std::to_string(bufs.size()) +
+          " vs. " + std::to_string(array.shape()[0]));
+
+    // copy data to buffers
+    size_t num_elems_per_buf = array.shape()[1];
+    for (size_t i = 0; i < bufs.size(); ++i)
+      memcpy(bufs[i], &array.data()[i * num_elems_per_buf],
+             num_elems_per_buf * sizeof(V));
   }
 }  // namespace
 
-LinuxAlignedFileReader::LinuxAlignedFileReader() {
-  this->file_desc = -1;
+TensorStoreSliceReader::TensorStoreSliceReader() {
 }
 
-LinuxAlignedFileReader::~LinuxAlignedFileReader() {
-  int64_t ret;
-  // check to make sure file_desc is closed
-  ret = ::fcntl(this->file_desc, F_GETFD);
-  if (ret == -1) {
-    if (errno != EBADF) {
-      std::cerr << "close() not called" << std::endl;
-      // close file desc
-      ret = ::close(this->file_desc);
-      // error checks
-      if (ret == -1) {
-        std::cerr << "close() failed; returned " << ret << ", errno=" << errno
-                  << ":" << ::strerror(errno) << std::endl;
-      }
+TensorStoreSliceReader::~TensorStoreSliceReader() {
+}
+
+void TensorStoreSliceReader::open(const std::string &tensors_filename_prefix,
+                                  size_t num_pts, size_t num_dims,
+                                  size_t max_nbrs_per_pt) {
+  auto context = ts::Context::Default();
+
+  std::vector<int64_t> embedding_dims = {static_cast<int64_t>(num_pts),
+                                         static_cast<int64_t>(num_dims)};
+  std::string embedding_filename = tensors_filename_prefix + "_embedding.zarr";
+  store_embedding =
+      open_tensorstore<float>(context, embedding_filename, embedding_dims);
+  std::cerr << "Opened TensorStore tensor: " << embedding_filename << std::endl;
+
+  std::vector<int64_t> num_nbrs_dims = {static_cast<int64_t>(num_pts), 1};
+  std::string num_nbrs_filename = tensors_filename_prefix + "_num_nbrs.zarr";
+  store_num_nbrs =
+      open_tensorstore<uint32_t>(context, num_nbrs_filename, num_nbrs_dims);
+  std::cerr << "Opened TensorStore tensor: " << num_nbrs_filename << std::endl;
+
+  std::vector<int64_t> nbrhood_dims = {static_cast<int64_t>(num_pts),
+                                       static_cast<int64_t>(max_nbrs_per_pt)};
+  std::string nbrhood_filename = tensors_filename_prefix + "_nbrhood.zarr";
+  store_nbrhood =
+      open_tensorstore<uint32_t>(context, nbrhood_filename, nbrhood_dims);
+  std::cerr << "Opened TensorStore tensor: " << nbrhood_filename << std::endl;
+}
+
+void TensorStoreSliceReader::read(
+    std::vector<std::vector<TensorsPointSliceRead>> &read_reqs, bool async) {
+  // inner vector is a list of slice indexes to be read in one shot
+  // outer vector is a list of such read calls that could be done sync/async
+  size_t num_reqs = read_reqs.size();
+
+  std::vector<ts::Future<ts::Array<ts::Shared<float>>>>    embedding_futures;
+  std::vector<ts::Future<ts::Array<ts::Shared<unsigned>>>> num_nbrs_futures;
+  std::vector<ts::Future<ts::Array<ts::Shared<unsigned>>>> nbrhood_futures;
+  embedding_futures.reserve(num_reqs);
+  num_nbrs_futures.reserve(num_reqs);
+  nbrhood_futures.reserve(num_reqs);
+
+  std::vector<std::vector<int64_t>>    pt_idxs;
+  std::vector<std::vector<float *>>    embedding_bufs;
+  std::vector<std::vector<unsigned *>> num_nbrs_bufs;
+  std::vector<std::vector<unsigned *>> nbrhood_bufs;
+  pt_idxs.reserve(num_reqs);
+  embedding_bufs.reserve(num_reqs);
+  num_nbrs_bufs.reserve(num_reqs);
+  nbrhood_bufs.reserve(num_reqs);
+
+  for (auto &&req : read_reqs) {
+    pt_idxs.emplace_back();
+    std::transform(req.begin(), req.end(), std::back_inserter(pt_idxs.back()),
+                   std::mem_fn(&TensorsPointSliceRead::pt_idx));
+    embedding_bufs.emplace_back();
+    std::transform(req.begin(), req.end(),
+                   std::back_inserter(embedding_bufs.back()),
+                   std::mem_fn(&TensorsPointSliceRead::embedding_buf));
+    num_nbrs_bufs.emplace_back();
+    std::transform(req.begin(), req.end(),
+                   std::back_inserter(num_nbrs_bufs.back()),
+                   [](TensorsPointSliceRead &req) -> unsigned * {
+                     return &req.num_nbrs_buf;
+                   });
+    nbrhood_bufs.emplace_back();
+    std::transform(req.begin(), req.end(),
+                   std::back_inserter(nbrhood_bufs.back()),
+                   std::mem_fn(&TensorsPointSliceRead::nbrhood_buf));
+  }
+
+  for (size_t i = 0; i < num_reqs; ++i) {
+    auto embedding_future =
+        tensor2d_submit_read_slice<float>(store_embedding, 0, pt_idxs[i]);
+    if (!async)
+      tensor2d_resolve_read_future<float>(std::move(embedding_future),
+                                          embedding_bufs[i]);
+    else
+      embedding_futures.push_back(std::move(embedding_future));
+
+    auto num_nbrs_future =
+        tensor2d_submit_read_slice<unsigned>(store_num_nbrs, 0, pt_idxs[i]);
+    if (!async)
+      tensor2d_resolve_read_future<unsigned>(std::move(num_nbrs_future),
+                                             num_nbrs_bufs[i]);
+    else
+      num_nbrs_futures.push_back(std::move(num_nbrs_future));
+
+    auto nbrhood_future =
+        tensor2d_submit_read_slice<unsigned>(store_nbrhood, 0, pt_idxs[i]);
+    if (!async)
+      tensor2d_resolve_read_future<unsigned>(std::move(nbrhood_future),
+                                             nbrhood_bufs[i]);
+    else
+      nbrhood_futures.push_back(std::move(nbrhood_future));
+  }
+
+  if (async) {
+    for (size_t i = 0; i < num_reqs; ++i) {
+      tensor2d_resolve_read_future<float>(std::move(embedding_futures[i]),
+                                          embedding_bufs[i]);
+      tensor2d_resolve_read_future<unsigned>(std::move(num_nbrs_futures[i]),
+                                             num_nbrs_bufs[i]);
+      tensor2d_resolve_read_future<unsigned>(std::move(nbrhood_futures[i]),
+                                             nbrhood_bufs[i]);
     }
   }
-}
-
-io_context_t &LinuxAlignedFileReader::get_ctx() {
-  std::unique_lock<std::mutex> lk(ctx_mut);
-  // perform checks only in DEBUG mode
-  if (ctx_map.find(std::this_thread::get_id()) == ctx_map.end()) {
-    std::cerr << "bad thread access; returning -1 as io_context_t" << std::endl;
-    return this->bad_ctx;
-  } else {
-    return ctx_map[std::this_thread::get_id()];
-  }
-}
-
-void LinuxAlignedFileReader::register_thread() {
-  auto                         my_id = std::this_thread::get_id();
-  std::unique_lock<std::mutex> lk(ctx_mut);
-  if (ctx_map.find(my_id) != ctx_map.end()) {
-    std::cerr << "multiple calls to register_thread from the same thread"
-              << std::endl;
-    return;
-  }
-  io_context_t ctx = 0;
-  int          ret = io_setup(MAX_EVENTS, &ctx);
-  if (ret != 0) {
-    lk.unlock();
-    assert(errno != EAGAIN);
-    assert(errno != ENOMEM);
-    std::cerr << "io_setup() failed; returned " << ret << ", errno=" << errno
-              << ":" << ::strerror(errno) << std::endl;
-  } else {
-    diskann::cout << "allocating ctx: " << ctx << " to thread-id:" << my_id
-                  << std::endl;
-    ctx_map[my_id] = ctx;
-  }
-  lk.unlock();
-}
-
-void LinuxAlignedFileReader::deregister_thread() {
-  auto                         my_id = std::this_thread::get_id();
-  std::unique_lock<std::mutex> lk(ctx_mut);
-  assert(ctx_map.find(my_id) != ctx_map.end());
-
-  lk.unlock();
-  io_context_t ctx = this->get_ctx();
-  io_destroy(ctx);
-  //  assert(ret == 0);
-  lk.lock();
-  ctx_map.erase(my_id);
-  std::cerr << "returned ctx from thread-id:" << my_id << std::endl;
-  lk.unlock();
-}
-
-void LinuxAlignedFileReader::deregister_all_threads() {
-  std::unique_lock<std::mutex> lk(ctx_mut);
-  for (auto x = ctx_map.begin(); x != ctx_map.end(); x++) {
-    io_context_t ctx = x.value();
-    io_destroy(ctx);
-    //  assert(ret == 0);
-    //  lk.lock();
-    //  ctx_map.erase(my_id);
-    //  std::cerr << "returned ctx from thread-id:" << my_id << std::endl;
-  }
-  ctx_map.clear();
-  //  lk.unlock();
-}
-
-void LinuxAlignedFileReader::open(const std::string &fname) {
-  int flags = O_DIRECT | O_RDONLY | O_LARGEFILE;
-  this->file_desc = ::open(fname.c_str(), flags);
-  // error checks
-  assert(this->file_desc != -1);
-  std::cerr << "Opened file : " << fname << std::endl;
-}
-
-void LinuxAlignedFileReader::close() {
-  //  int64_t ret;
-
-  // check to make sure file_desc is closed
-  ::fcntl(this->file_desc, F_GETFD);
-  //  assert(ret != -1);
-
-  ::close(this->file_desc);
-  //  assert(ret != -1);
-}
-
-void LinuxAlignedFileReader::read(std::vector<AlignedRead> &read_reqs,
-                                  io_context_t &ctx, bool async) {
-  if (async == true) {
-    diskann::cout << "Async currently not supported in linux." << std::endl;
-  }
-  assert(this->file_desc != -1);
-  // #pragma omp critical
-  //	std::cout << "thread: " << std::this_thread::get_id() << ", crtx: " <<
-  //  ctx
-  //<< "\n";
-  execute_io(ctx, this->file_desc, read_reqs);
 }

@@ -25,6 +25,7 @@
 #include "windows_aligned_file_reader.h"
 #else
 #include "linux_aligned_file_reader.h"
+#include "tensorstore_slice_reader.h"
 #endif
 
 #define READ_U64(stream, val) stream.read((char *) &val, sizeof(_u64))
@@ -32,7 +33,7 @@
 #define READ_UNSIGNED(stream, val) stream.read((char *) &val, sizeof(unsigned))
 
 // sector # on disk where node_id is present with in the graph part
-#define NODE_SECTOR_NO(node_id) (((_u64)(node_id)) / nnodes_per_sector + 1)
+#define NODE_SECTOR_NO(node_id) (((_u64) (node_id)) / nnodes_per_sector + 1)
 
 // obtains region of sector containing node
 #define OFFSET_TO_NODE(sector_buf, node_id) \
@@ -47,18 +48,19 @@
 
 // sector # beyond the end of graph where data for id is present for reordering
 #define VECTOR_SECTOR_NO(id) \
-  (((_u64)(id)) / nvecs_per_sector + reorder_data_start_sector)
+  (((_u64) (id)) / nvecs_per_sector + reorder_data_start_sector)
 
 // sector # beyond the end of graph where data for id is present for reordering
 #define VECTOR_SECTOR_OFFSET(id) \
-  ((((_u64)(id)) % nvecs_per_sector) * data_dim * sizeof(float))
+  ((((_u64) (id)) % nvecs_per_sector) * data_dim * sizeof(float))
 
 namespace diskann {
 
   template<typename T>
-  PQFlashIndex<T>::PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileReader,
-                                diskann::Metric                     m)
-      : reader(fileReader), metric(m) {
+  PQFlashIndex<T>::PQFlashIndex(
+      std::shared_ptr<AlignedFileReader>      &fileReader,
+      std::shared_ptr<TensorStoreSliceReader> &tensorReader, diskann::Metric m)
+      : reader(fileReader), tensor_reader(tensorReader), metric(m) {
     if (m == diskann::Metric::COSINE || m == diskann::Metric::INNER_PRODUCT) {
       if (std::is_floating_point<T>::value) {
         diskann::cout << "Cosine metric chosen for (normalized) float data."
@@ -142,54 +144,98 @@ namespace diskann {
     size_t BLOCK_SIZE = 8;
     size_t num_blocks = DIV_ROUND_UP(num_cached_nodes, BLOCK_SIZE);
 
-    for (_u64 block = 0; block < num_blocks; block++) {
-      _u64 start_idx = block * BLOCK_SIZE;
-      _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * BLOCK_SIZE);
-      std::vector<AlignedRead>             read_reqs;
-      std::vector<std::pair<_u32, char *>> nhoods;
-      for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
-        AlignedRead read;
-        char *      buf = nullptr;
-        alloc_aligned((void **) &buf, SECTOR_LEN, SECTOR_LEN);
-        nhoods.push_back(std::make_pair(node_list[node_idx], buf));
-        read.len = SECTOR_LEN;
-        read.buf = buf;
-        read.offset = NODE_SECTOR_NO(node_list[node_idx]) * SECTOR_LEN;
-        read_reqs.push_back(read);
-      }
+    if (!use_tensors) {
+      // if not using tensorstore backend
 
-      reader->read(read_reqs, ctx);
+      for (_u64 block = 0; block < num_blocks; block++) {
+        _u64 start_idx = block * BLOCK_SIZE;
+        _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * BLOCK_SIZE);
 
-      _u64 node_idx = start_idx;
-      for (_u32 i = 0; i < read_reqs.size(); i++) {
+        std::vector<AlignedRead>             read_reqs;
+        std::vector<std::pair<_u32, char *>> nhoods;
+        for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
+          AlignedRead read;
+          char       *buf = nullptr;
+          alloc_aligned((void **) &buf, SECTOR_LEN, SECTOR_LEN);
+          nhoods.push_back(std::make_pair(node_list[node_idx], buf));
+          read.len = SECTOR_LEN;
+          read.buf = buf;
+          read.offset = NODE_SECTOR_NO(node_list[node_idx]) * SECTOR_LEN;
+          read_reqs.push_back(read);
+        }
+
+        reader->read(read_reqs, ctx);
+
+        _u64 node_idx = start_idx;
+        for (_u32 i = 0; i < read_reqs.size(); i++) {
 #if defined(_WINDOWS) && \
     defined(USE_BING_INFRA)  // this block is to handle failed reads in
                              // production settings
-        if ((*ctx.m_pRequestsStatus)[i] != IOContext::READ_SUCCESS) {
-          continue;
-        }
+          if ((*ctx.m_pRequestsStatus)[i] != IOContext::READ_SUCCESS) {
+            continue;
+          }
 #endif
-        auto &nhood = nhoods[i];
-        char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
-        T *   node_coords = OFFSET_TO_NODE_COORDS(node_buf);
-        T *   cached_coords = coord_cache_buf + node_idx * aligned_dim;
-        memcpy(cached_coords, node_coords, disk_bytes_per_point);
-        coord_cache.insert(std::make_pair(nhood.first, cached_coords));
+          auto &nhood = nhoods[i];
+          char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
+          T    *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
+          T    *cached_coords = coord_cache_buf + node_idx * aligned_dim;
+          memcpy(cached_coords, node_coords, disk_bytes_per_point);
+          coord_cache.insert(std::make_pair(nhood.first, cached_coords));
 
-        // insert node nhood into nhood_cache
-        unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
+          // insert node nhood into nhood_cache
+          unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
 
-        auto                        nnbrs = *node_nhood;
-        unsigned *                  nbrs = node_nhood + 1;
-        std::pair<_u32, unsigned *> cnhood;
-        cnhood.first = nnbrs;
-        cnhood.second = nhood_cache_buf + node_idx * (max_degree + 1);
-        memcpy(cnhood.second, nbrs, nnbrs * sizeof(unsigned));
-        nhood_cache.insert(std::make_pair(nhood.first, cnhood));
-        aligned_free(nhood.second);
-        node_idx++;
+          auto                        nnbrs = *node_nhood;
+          unsigned                   *nbrs = node_nhood + 1;
+          std::pair<_u32, unsigned *> cnhood;
+          cnhood.first = nnbrs;
+          cnhood.second = nhood_cache_buf + node_idx * (max_degree + 1);
+          memcpy(cnhood.second, nbrs, nnbrs * sizeof(unsigned));
+          nhood_cache.insert(std::make_pair(nhood.first, cnhood));
+          aligned_free(nhood.second);
+          node_idx++;
+        }
+      }
+
+    } else {
+      // if using tensorstore backend
+      std::vector<std::vector<TensorsPointSliceRead>> read_reqs;
+      read_reqs.reserve(num_blocks);
+
+      for (_u64 block = 0; block < num_blocks; block++) {
+        _u64 start_idx = block * BLOCK_SIZE;
+        _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * BLOCK_SIZE);
+        read_reqs.emplace_back();
+        read_reqs.back().reserve(end_idx - start_idx);
+
+        for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
+          read_reqs[block].push_back(TensorsPointSliceRead{
+              .pt_idx = node_list[node_idx],
+              .embedding_buf = reinterpret_cast<float *>(
+                  coord_cache_buf + node_idx * aligned_dim),
+              .num_nbrs_buf = 0,
+              .nbrhood_buf = nhood_cache_buf + node_idx * (max_degree + 1)});
+        }
+      }
+
+      tensor_reader->read(read_reqs, use_tensors_async);
+
+      for (_u64 block = 0; block < num_blocks; block++) {
+        _u64 start_idx = block * BLOCK_SIZE;
+        _u64 end_idx = (std::min)(num_cached_nodes, (block + 1) * BLOCK_SIZE);
+
+        for (_u32 i = 0; i < read_reqs[block].size(); i++) {
+          coord_cache.insert(std::make_pair(
+              read_reqs[block][i].pt_idx,
+              reinterpret_cast<T *>(read_reqs[block][i].embedding_buf)));
+          nhood_cache.insert(
+              std::make_pair(read_reqs[block][i].pt_idx,
+                             std::make_pair(read_reqs[block][i].num_nbrs_buf,
+                                            read_reqs[block][i].nbrhood_buf)));
+        }
       }
     }
+
     diskann::cout << "..done." << std::endl;
   }
 
@@ -215,7 +261,7 @@ namespace diskann {
     }
 
     _u64 sample_num, sample_dim, sample_aligned_dim;
-    T *  samples;
+    T   *samples;
 
 #ifdef EXEC_ENV_OLS
     if (files.fileExists(sample_bin)) {
@@ -268,7 +314,7 @@ namespace diskann {
     node_list.clear();
 
     // Do not cache more than 10% of the nodes in the index
-    _u64 tenp_nodes = (_u64)(std::round(this->num_points * 0.1));
+    _u64 tenp_nodes = (_u64) (std::round(this->num_points * 0.1));
     if (num_nodes_to_cache > tenp_nodes) {
       diskann::cout << "Reducing nodes to cache from: " << num_nodes_to_cache
                     << " to: " << tenp_nodes
@@ -336,7 +382,7 @@ namespace diskann {
           read_reqs.push_back(read);
         }
 
-        // issue read requests
+        // TODO: add tensorstore backend path
         reader->read(read_reqs, ctx);
 
         // process each nhood buf
@@ -351,7 +397,7 @@ namespace diskann {
           auto &nhood = nhoods[i];
 
           // insert node coord into coord_cache
-          char *    node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
+          char     *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
           unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
           _u64      nnbrs = (_u64) *node_nhood;
           unsigned *nbrs = node_nhood + 1;
@@ -403,7 +449,7 @@ namespace diskann {
     // borrow ctx
     ScratchStoreManager<SSDThreadData<T>> manager(this->thread_data);
     auto                                  data = manager.scratch_space();
-    IOContext &                           ctx = data->ctx;
+    IOContext                            &ctx = data->ctx;
     diskann::cout << "Loading centroid data from medoids vector data of "
                   << num_medoids << " medoid(s)" << std::endl;
     for (uint64_t cur_m = 0; cur_m < num_medoids; cur_m++) {
@@ -415,6 +461,8 @@ namespace diskann {
       medoid_read[0].len = SECTOR_LEN;
       medoid_read[0].buf = medoid_buf;
       medoid_read[0].offset = NODE_SECTOR_NO(medoid) * SECTOR_LEN;
+
+      // TODO: add tensorstore backend path
       reader->read(medoid_read, ctx);
 
       // all data about medoid
@@ -444,7 +492,9 @@ namespace diskann {
                             const char *index_prefix) {
 #else
   template<typename T>
-  int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix) {
+  int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix,
+                            const char *index_tensors_prefix, bool use_tensors,
+                            bool use_tensors_async) {
 #endif
     std::string pq_table_bin = std::string(index_prefix) + "_pq_pivots.bin";
     std::string pq_compressed_vectors =
@@ -464,6 +514,9 @@ namespace diskann {
 #endif
 
     this->disk_index_file = disk_index_file;
+    this->index_tensors_prefix = std::string(index_tensors_prefix);
+    this->use_tensors = use_tensors;
+    this->use_tensors_async = use_tensors_async;
 
     if (pq_file_num_centroids != 256) {
       diskann::cout << "Error. Number of PQ centroids is not 256. Exitting."
@@ -543,7 +596,7 @@ namespace diskann {
     this->setup_thread_data(num_threads);
     this->max_nthreads = num_threads;
 
-    char *                   bytes = getHeaderBytes();
+    char                    *bytes = getHeaderBytes();
     ContentBuf               buf(bytes, HEADER_SIZE);
     std::basic_istream<char> index_metadata(&buf);
 #else
@@ -624,6 +677,14 @@ namespace diskann {
     this->setup_thread_data(num_threads);
     this->max_nthreads = num_threads;
 
+    if (use_tensors) {
+      uint64_t max_nbrs_per_pt =
+          (max_node_len - disk_ndims * sizeof(T) - sizeof(unsigned)) /
+          sizeof(unsigned);
+      tensor_reader->open(index_tensors_prefix, disk_nnodes, disk_ndims,
+                          max_nbrs_per_pt);
+    }
+
 #endif
 
 #ifdef EXEC_ENV_OLS
@@ -680,7 +741,7 @@ namespace diskann {
     } else {
       num_medoids = 1;
       medoids = new uint32_t[1];
-      medoids[0] = (_u32)(medoid_id_on_file);
+      medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
     }
 
@@ -732,7 +793,7 @@ namespace diskann {
   template<typename T>
   void PQFlashIndex<T>::cached_beam_search(const T *query1, const _u64 k_search,
                                            const _u64 l_search, _u64 *indices,
-                                           float *     distances,
+                                           float      *distances,
                                            const _u64  beam_width,
                                            const bool  use_reorder_data,
                                            QueryStats *stats) {
@@ -752,7 +813,7 @@ namespace diskann {
 
     ScratchStoreManager<SSDThreadData<T>> manager(this->thread_data);
     auto                                  data = manager.scratch_space();
-    IOContext &                           ctx = data->ctx;
+    IOContext                            &ctx = data->ctx;
     auto                                  query_scratch = &(data->scratch);
     auto pq_query_scratch = query_scratch->_pq_scratch;
 
@@ -762,7 +823,7 @@ namespace diskann {
     // copy query to thread specific aligned and allocated memory (for distance
     // calculations we need aligned data)
     float  query_norm = 0;
-    T *    aligned_query_T = query_scratch->aligned_query_T;
+    T     *aligned_query_T = query_scratch->aligned_query_T;
     float *query_float = pq_query_scratch->aligned_query_float;
     float *query_rotated = pq_query_scratch->rotated_query;
 
@@ -789,7 +850,7 @@ namespace diskann {
     }
 
     // pointers to buffers for data
-    T *   data_buf = query_scratch->coord_scratch;
+    T    *data_buf = query_scratch->coord_scratch;
     _u64 &data_buf_idx = query_scratch->coord_idx;
     _mm_prefetch((char *) data_buf, _MM_HINT_T1);
 
@@ -805,7 +866,7 @@ namespace diskann {
 
     // query <-> neighbor list
     float *dist_scratch = pq_query_scratch->aligned_dist_scratch;
-    _u8 *  pq_coord_scratch = pq_query_scratch->aligned_pq_coord_scratch;
+    _u8   *pq_coord_scratch = pq_query_scratch->aligned_pq_coord_scratch;
 
     // lambda to batch compute query<-> node distances in PQ space
     auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
@@ -818,7 +879,7 @@ namespace diskann {
     };
     Timer query_timer, io_timer, cpu_timer;
 
-    tsl::robin_set<_u64> & visited = query_scratch->visited;
+    tsl::robin_set<_u64>  &visited = query_scratch->visited;
     std::vector<Neighbor> &retset = query_scratch->retset;
     std::vector<Neighbor> &full_retset = query_scratch->full_retset;
     retset.reserve(l_search + 1);
@@ -919,6 +980,7 @@ namespace diskann {
 #ifdef USE_BING_INFRA
         reader->read(frontier_read_reqs, ctx, true);  // async reader windows.
 #else
+        // TODO: add tensorstore backend path
         reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
 #endif
         if (stats != nullptr) {
@@ -929,7 +991,7 @@ namespace diskann {
       // process cached nhoods
       for (auto &cached_nhood : cached_nhoods) {
         auto  global_cache_iter = coord_cache.find(cached_nhood.first);
-        T *   node_fp_coords_copy = global_cache_iter->second;
+        T    *node_fp_coords_copy = global_cache_iter->second;
         float cur_expanded_dist;
         if (!use_disk_index_pq) {
           cur_expanded_dist = dist_cmp->compare(
@@ -998,8 +1060,8 @@ namespace diskann {
         char *node_disk_buf =
             OFFSET_TO_NODE(frontier_nhood.second, frontier_nhood.first);
         unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
-        _u64      nnbrs = (_u64)(*node_buf);
-        T *       node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
+        _u64      nnbrs = (_u64) (*node_buf);
+        T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
         //        assert(data_buf_idx < MAX_N_CMPS);
         if (data_buf_idx == MAX_N_CMPS)
           data_buf_idx = 0;
@@ -1108,6 +1170,7 @@ namespace diskann {
 #ifdef USE_BING_INFRA
       reader->read(vec_read_reqs, ctx, false);  // sync reader windows.
 #else
+      // TODO: add tensorstore backend path
       reader->read(vec_read_reqs, ctx);  // synchronous IO linux
 #endif
       if (stats != nullptr) {
@@ -1160,10 +1223,10 @@ namespace diskann {
   _u32 PQFlashIndex<T>::range_search(const T *query1, const double range,
                                      const _u64          min_l_search,
                                      const _u64          max_l_search,
-                                     std::vector<_u64> & indices,
+                                     std::vector<_u64>  &indices,
                                      std::vector<float> &distances,
                                      const _u64          min_beam_width,
-                                     QueryStats *        stats) {
+                                     QueryStats         *stats) {
     _u32 res_count = 0;
 
     bool stop_flag = false;
@@ -1186,7 +1249,7 @@ namespace diskann {
         } else if (i == l_search - 1)
           res_count = l_search;
       }
-      if (res_count < (_u32)(l_search / 2.0))
+      if (res_count < (_u32) (l_search / 2.0))
         stop_flag = true;
       l_search = l_search * 2;
       if (l_search > max_l_search)
@@ -1200,7 +1263,7 @@ namespace diskann {
 #ifdef EXEC_ENV_OLS
   template<typename T>
   char *PQFlashIndex<T>::getHeaderBytes() {
-    IOContext & ctx = reader->get_ctx();
+    IOContext  &ctx = reader->get_ctx();
     AlignedRead readReq;
     readReq.buf = new char[PQFlashIndex<T>::HEADER_SIZE];
     readReq.len = PQFlashIndex<T>::HEADER_SIZE;
