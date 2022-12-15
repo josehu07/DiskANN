@@ -104,18 +104,18 @@ namespace diskann {
     // Batch build from a file. Optionally pass tags vector.
     DISKANN_DLLEXPORT void build(
         const char *filename, const size_t num_points_to_load,
-        Parameters              &parameters,
+        Parameters &             parameters,
         const std::vector<TagT> &tags = std::vector<TagT>());
 
     // Batch build from a file. Optionally pass tags file.
-    DISKANN_DLLEXPORT void build(const char  *filename,
+    DISKANN_DLLEXPORT void build(const char * filename,
                                  const size_t num_points_to_load,
-                                 Parameters  &parameters,
-                                 const char  *tag_filename);
+                                 Parameters & parameters,
+                                 const char * tag_filename);
 
     // Batch build from a data array, which must pad vectors to aligned_dim
     DISKANN_DLLEXPORT void build(const T *data, const size_t num_points_to_load,
-                                 Parameters              &parameters,
+                                 Parameters &             parameters,
                                  const std::vector<TagT> &tags);
 
     // Set starting point of an index before inserting any points incrementally
@@ -141,7 +141,7 @@ namespace diskann {
     // Initialize space for res_vectors before calling.
     DISKANN_DLLEXPORT size_t search_with_tags(const T *query, const uint64_t K,
                                               const unsigned L, TagT *tags,
-                                              float            *distances,
+                                              float *           distances,
                                               std::vector<T *> &res_vectors);
 
     // Will fail if tag already in the index or if tag=0.
@@ -157,7 +157,7 @@ namespace diskann {
     // Record deleted points now and restructure graph later. Add to failed_tags
     // if tag not found.
     DISKANN_DLLEXPORT void lazy_delete(const std::vector<TagT> &tags,
-                                       std::vector<TagT>       &failed_tags);
+                                       std::vector<TagT> &      failed_tags);
 
     // Call after a series of lazy deletions
     // Returns number of live points left after consolidation
@@ -201,7 +201,7 @@ namespace diskann {
     Index<T, TagT> &operator=(const Index<T, TagT> &) = delete;
 
     // Use after _data and _nd have been populated
-    void build_with_data_populated(Parameters              &parameters,
+    void build_with_data_populated(Parameters &             parameters,
                                    const std::vector<TagT> &tags);
 
     // generates 1 frozen point that will never be deleted from the graph
@@ -214,7 +214,7 @@ namespace diskann {
     template<typename IDType>
     std::pair<uint32_t, uint32_t> search_impl(const T *query, const size_t K,
                                               const unsigned L, IDType *indices,
-                                              float                *distances,
+                                              float *               distances,
                                               InMemQueryScratch<T> *scratch);
 
     std::pair<uint32_t, uint32_t> iterate_to_fixed_point(
@@ -296,7 +296,7 @@ namespace diskann {
     Distance<T> *_distance = nullptr;
 
     // Data
-    T    *_data = nullptr;
+    T *   _data = nullptr;
     char *_opt_graph;
 
     // Graph related data structures
