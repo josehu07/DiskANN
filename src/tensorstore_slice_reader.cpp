@@ -15,7 +15,7 @@ namespace {
   static constexpr size_t TENSORSTORE_CACHE_POOL_SIZE = 1000000000;  // ~1GB
 
   template<typename V>
-  static ts::TensorStore<V> open_tensorstore(ts::Context       &context,
+  static ts::TensorStore<V> open_tensorstore(ts::Context &      context,
                                              const std::string &filename,
                                              const std::vector<int64_t> &dims) {
     std::string dtype_str;
@@ -58,7 +58,7 @@ namespace {
   template<typename V>
   static void tensor2d_resolve_read_future(
       ts::Future<ts::Array<ts::Shared<V>>> future,
-      const std::vector<V *>              &bufs) {
+      const std::vector<V *> &             bufs) {
     auto read_result = future.result();
     if (!read_result.ok())
       throw TensorStoreANNException("failed to resolve read future: " +
