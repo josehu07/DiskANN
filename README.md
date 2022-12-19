@@ -60,12 +60,13 @@ Run queries with different parameters:
 
 Automated wrapper for run.py:
 ```bash
-./script/run_test.sh dataset output_directory
+./script/run_test.sh /mnt/ssd/data/sift-tiny/sifttiny /mnt/ssd/results/sift-tiny
+# currently, `dataset_path` is /mnt/ssd/data/sift/sift
 ```
 
 Bar graph plotting with `run.py` wrapper generated data:
 ```bash
-./script/plot.py input_directory output_directory
+./script/plot.py /mnt/ssd/results/sift-tiny /mnt/ssd/results/sift-tiny/plots
 ```
 
 ## TODO List
