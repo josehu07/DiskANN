@@ -58,6 +58,16 @@ Run queries with different parameters:
 ./scripts/run.py query --dataset /mnt/ssd/data/sift-tiny/sifttiny [--k_depth 10] [--npts_to_cache 100] [--use_ts] [--ts_async] [-L 10 50 100]
 ```
 
+Automated wrapper for run.py:
+```bash
+./script/run_test.sh dataset output_directory
+```
+
+Bar graph plotting with `run.py` wrapper generated data:
+```bash
+./script/plot.py input_directory output_directory
+```
+
 ## TODO List
 
 - [x] Converter from disk index to zarr tensors
