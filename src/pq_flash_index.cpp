@@ -555,7 +555,8 @@ namespace diskann {
   template<typename T>
   int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix,
                             const char *index_tensors_prefix, bool use_tensors,
-                            bool use_tensors_async) {
+                            bool        use_tensors_async,
+                            const char *use_remote_addr) {
 #endif
     std::string pq_table_bin = std::string(index_prefix) + "_pq_pivots.bin";
     std::string pq_compressed_vectors =
@@ -747,7 +748,7 @@ namespace diskann {
         sizeof(unsigned);
     if (use_tensors) {
       tensor_reader->open(index_tensors_prefix, disk_nnodes, disk_ndims,
-                          this->max_nbrs_per_pt);
+                          this->max_nbrs_per_pt, use_remote_addr);
     }
 
 #endif

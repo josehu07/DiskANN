@@ -70,19 +70,35 @@ def handle_convert(dataset):
     run_program(PROG_DISK_INDEX_TO_TENSORS, options)
 
 
-def handle_query(dataset, k_depth, npts_to_cache, use_ts, ts_async,
-                 list_sizes):
+def handle_query(dataset,
+                 k_depth,
+                 npts_to_cache,
+                 use_ts,
+                 ts_async,
+                 list_sizes,
+                 remote_prefix=None):
+    # we split the address into a url and a relative path
+    remote_url, remote_dataset = remote_prefix.rsplit('/', 1) if remote_prefix \
+        else (None, None)
+    # ensure remote_url and remote_dataset must all be none empty string
+    print(remote_url)
+    print(remote_dataset)
+    assert remote_prefix is None or ('/' in remote_prefix
+                                     and not not remote_url
+                                     and not not remote_dataset)
+
     index_path_prefix = f"{dataset}_R32_L50_A1.2"
     disk_index_path = f"{dataset}_R32_L50_A1.2_disk.index"
-    tensors_prefix = f"{dataset}_R32_L50_A1.2_tensor"
+    tensors_prefix = f"{remote_dataset or dataset}_R32_L50_A1.2_tensor"
     query_fbin_path = f"{dataset}_query.fbin"
     gt_file_path = f"{dataset}_query_gt100"
     res_path_prefix = f"{dataset}_query_res"
     check_file_exists(query_fbin_path)
     check_file_exists(disk_index_path)
-    check_dir_exists(f"{tensors_prefix}_embedding.zarr")
-    check_dir_exists(f"{tensors_prefix}_num_nbrs.zarr")
-    check_dir_exists(f"{tensors_prefix}_nbrhood.zarr")
+    if not remote_prefix:
+        check_dir_exists(f"{tensors_prefix}_embedding.zarr")
+        check_dir_exists(f"{tensors_prefix}_num_nbrs.zarr")
+        check_dir_exists(f"{tensors_prefix}_nbrhood.zarr")
 
     options = [
         '--data_type', 'float', '--dist_fn', 'l2', '--index_path_prefix',
@@ -93,10 +109,13 @@ def handle_query(dataset, k_depth, npts_to_cache, use_ts, ts_async,
     ]
     for l in list_sizes:
         options.append(str(l))
+    assert use_ts or not remote_prefix
     if use_ts:
         options += ['--index_tensors_prefix', tensors_prefix]
         if ts_async:
             options.append('--use_tensors_async')
+        if remote_prefix:
+            options += ['--use_remote_addr', f'{remote_url}']
     run_program(PROG_SEARCH_DISK_INDEX, options)
 
 
@@ -162,6 +181,11 @@ if __name__ == "__main__":
                               type=int,
                               nargs='+',
                               default=('10', '50', '100'))
+    parser_query.add_argument(
+        '--use_remote',
+        help=
+        "remote prefix (URL+path) of dataset for TensorStore http backend; only valid if use_ts",
+        default=None)
 
     args = parser.parse_args()
     if args.subparser == "to_fbin":
@@ -172,4 +196,5 @@ if __name__ == "__main__":
         handle_convert(args.dataset)
     elif args.subparser == "query":
         handle_query(args.dataset, args.k_depth, args.npts_to_cache,
-                     args.use_ts, args.ts_async, args.list_sizes)
+                     args.use_ts, args.ts_async, args.list_sizes,
+                     args.use_remote)

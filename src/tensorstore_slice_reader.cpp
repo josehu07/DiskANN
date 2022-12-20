@@ -17,7 +17,8 @@ namespace {
   template<typename V>
   static ts::TensorStore<V> open_tensorstore(ts::Context &      context,
                                              const std::string &filename,
-                                             const std::vector<int64_t> &dims) {
+                                             const std::vector<int64_t> &dims,
+                                             const char *use_remote_addr) {
     std::string dtype_str;
     if constexpr (std::is_same<V, float>::value)
       dtype_str = "<f4";
@@ -31,13 +32,26 @@ namespace {
       dtype_str = "<u4";
 
     auto open_result =
-        ts::Open<V>({{"driver", "zarr"},
-                     {"kvstore", {{"driver", "file"}, {"path", filename}}},
-                     {"cache_pool",
-                      {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
-                     {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
-                    context, ts::OpenMode::open, ts::ReadWriteMode::read)
-            .result();
+        use_remote_addr
+            ? ts::Open<V>(
+                  {{"driver", "zarr"},
+                   {"kvstore",
+                    {{"driver", "http"},
+                     {"base_url", use_remote_addr},
+                     {"path", filename}}},
+                   {"cache_pool",
+                    {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
+                   {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
+                  context, ts::OpenMode::open, ts::ReadWriteMode::read)
+                  .result()
+            : ts::Open<V>(
+                  {{"driver", "zarr"},
+                   {"kvstore", {{"driver", "file"}, {"path", filename}}},
+                   {"cache_pool",
+                    {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
+                   {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
+                  context, ts::OpenMode::open, ts::ReadWriteMode::read)
+                  .result();
     if (!open_result.ok())
       throw TensorStoreANNException("failed to open TensorStore instance: " +
                                     open_result.status().ToString());
@@ -92,27 +106,28 @@ TensorStoreSliceReader::~TensorStoreSliceReader() {
 
 void TensorStoreSliceReader::open(const std::string &tensors_filename_prefix,
                                   size_t num_pts, size_t num_dims,
-                                  size_t max_nbrs_per_pt) {
+                                  size_t      max_nbrs_per_pt,
+                                  const char *use_remote_addr) {
   auto context = ts::Context::Default();
 
   std::vector<int64_t> embedding_dims = {static_cast<int64_t>(num_pts),
                                          static_cast<int64_t>(num_dims)};
   std::string embedding_filename = tensors_filename_prefix + "_embedding.zarr";
-  store_embedding =
-      open_tensorstore<float>(context, embedding_filename, embedding_dims);
+  store_embedding = open_tensorstore<float>(context, embedding_filename,
+                                            embedding_dims, use_remote_addr);
   std::cerr << "Opened TensorStore tensor: " << embedding_filename << std::endl;
 
   std::vector<int64_t> num_nbrs_dims = {static_cast<int64_t>(num_pts), 1};
   std::string num_nbrs_filename = tensors_filename_prefix + "_num_nbrs.zarr";
-  store_num_nbrs =
-      open_tensorstore<uint32_t>(context, num_nbrs_filename, num_nbrs_dims);
+  store_num_nbrs = open_tensorstore<uint32_t>(context, num_nbrs_filename,
+                                              num_nbrs_dims, use_remote_addr);
   std::cerr << "Opened TensorStore tensor: " << num_nbrs_filename << std::endl;
 
   std::vector<int64_t> nbrhood_dims = {static_cast<int64_t>(num_pts),
                                        static_cast<int64_t>(max_nbrs_per_pt)};
   std::string nbrhood_filename = tensors_filename_prefix + "_nbrhood.zarr";
-  store_nbrhood =
-      open_tensorstore<uint32_t>(context, nbrhood_filename, nbrhood_dims);
+  store_nbrhood = open_tensorstore<uint32_t>(context, nbrhood_filename,
+                                             nbrhood_dims, use_remote_addr);
   std::cerr << "Opened TensorStore tensor: " << nbrhood_filename << std::endl;
 }
 

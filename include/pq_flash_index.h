@@ -41,7 +41,8 @@ namespace diskann {
     DISKANN_DLLEXPORT int  load(uint32_t num_threads, const char *index_prefix,
                                 const char *index_tensors_prefix = nullptr,
                                 bool        use_tensors = false,
-                                bool        use_tensors_async = false);
+                                bool        use_tensors_async = false,
+                                const char *use_remote_addr = nullptr);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);

@@ -46,7 +46,8 @@ class TensorStoreSliceReader {
   // Open & close ops
   // Blocking calls
   void open(const std::string& tensors_filename_prefix, size_t num_pts,
-            size_t num_dims, size_t max_nbrs_per_pt);
+            size_t num_dims, size_t max_nbrs_per_pt,
+            const char* use_remote_addr);
 
   // process batch of tensorstore slices read requests in parallel
   // NOTE :: blocking call
