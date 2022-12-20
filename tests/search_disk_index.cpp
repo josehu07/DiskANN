@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <boost/program_options.hpp>
+#include <string>
 
 #include "index.h"
 #include "utils.h"
@@ -59,7 +60,8 @@ int search_disk_index(
     std::string& gt_file, const unsigned num_threads, const unsigned recall_at,
     const unsigned beamwidth, const unsigned num_nodes_to_cache,
     const _u32 search_io_limit, const std::vector<unsigned>& Lvec,
-    const bool use_reorder_data = false, const bool use_tensors_async = false) {
+    const bool use_reorder_data = false, const bool use_tensors_async = false,
+    const char* use_remote_addr = nullptr) {
   diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
   if (beamwidth <= 0)
     diskann::cout << "beamwidth to be optimized for each L value" << std::flush;
@@ -111,7 +113,7 @@ int search_disk_index(
 
   int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str(),
                                index_tensors_prefix.c_str(), use_tensors,
-                               use_tensors_async);
+                               use_tensors_async, use_remote_addr);
 
   if (res != 0) {
     return res;
@@ -297,6 +299,7 @@ int main(int argc, char** argv) {
   std::vector<unsigned> Lvec;
   bool                  use_reorder_data = false;
   bool                  use_tensors_async = false;
+  std::string           use_remote_addr;
 
   po::options_description desc{"Arguments"};
   try {
@@ -349,6 +352,9 @@ int main(int argc, char** argv) {
     desc.add_options()("use_tensors_async",
                        po::bool_switch()->default_value(false),
                        "Use async I/O pattern for tensorstore backend.");
+    desc.add_options()(
+        "use_remote_addr", po::value<std::string>(&use_remote_addr),
+        "Remote URL for tensorstore http kv-store backend if using.");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -418,19 +424,22 @@ int main(int argc, char** argv) {
           metric, index_path_prefix, index_tensors_prefix, use_tensors,
           result_path_prefix, query_file, gt_file, num_threads, K, W,
           num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data,
-          use_tensors_async);
+          use_tensors_async,
+          use_remote_addr.empty() ? nullptr : use_remote_addr.c_str());
     else if (data_type == std::string("int8"))
       return search_disk_index<int8_t>(
           metric, index_path_prefix, index_tensors_prefix, use_tensors,
           result_path_prefix, query_file, gt_file, num_threads, K, W,
           num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data,
-          use_tensors_async);
+          use_tensors_async,
+          use_remote_addr.empty() ? nullptr : use_remote_addr.c_str());
     else if (data_type == std::string("uint8"))
       return search_disk_index<uint8_t>(
           metric, index_path_prefix, index_tensors_prefix, use_tensors,
           result_path_prefix, query_file, gt_file, num_threads, K, W,
           num_nodes_to_cache, search_io_limit, Lvec, use_reorder_data,
-          use_tensors_async);
+          use_tensors_async,
+          use_remote_addr.empty() ? nullptr : use_remote_addr.c_str());
     else {
       std::cerr << "Unsupported data type. Use float or int8 or uint8"
                 << std::endl;

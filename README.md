@@ -70,13 +70,29 @@ Bar graph plotting with `run.py` wrapper generated data:
 ./scripts/plot.py /mnt/ssd/result/gist /mnt/ssd/result/gist/plots
 ```
 
+
+To run TensorStore with remote http server, create another node (assume IP address `10.10.1.2`) and launch a http server:
+
+```bash
+# at the parent directory of gist/
+python3 -m http.server  # this will use 8000 port
+```
+
+Then in the previous node, run the script with remote address specified:
+
+```bash
+./scripts/run.py query --dataset /mnt/ssd/data/gist/gist --k_depth 10 --list_sizes 10 --use_ts --use_remote http://10.10.1.2:8000/gist/gist
+```
+
+This will load query from local and use TensorStore on `http://10.10.1.2:8000` server.
+
 ## TODO List
 
 - [x] Converter from disk index to zarr tensors
 - [x] Search path tensorstore reader integration
 - [x] Allow turning on/off async I/O patterns for comparison
 - [ ] Allow turning on/off tensorstore cache pool for comparison (currently sees no effect, needs further study)
-- [ ] Using a remote, disaggregated storage backend (future work)
+- [x] Using a remote storage backend
 
 
 # DiskANN - Original README
