@@ -60,12 +60,14 @@ Run queries with different parameters:
 
 Automated wrapper for run.py:
 ```bash
-./script/run_test.sh dataset output_directory
+./scripts/run_tests.sh /mnt/ssd/data/gist/gist /mnt/ssd/result/gist
+# the first argument is a path prefix of `*_learn.fbin`
+# the second argument is the log directory
 ```
 
 Bar graph plotting with `run.py` wrapper generated data:
 ```bash
-./script/plot.py input_directory output_directory
+./scripts/plot.py /mnt/ssd/result/gist /mnt/ssd/result/gist/plots
 ```
 
 ## TODO List
