@@ -12,7 +12,7 @@
 #include "tensorstore/index_space/dim_expression.h"
 
 namespace {
-  static constexpr size_t TENSORSTORE_CACHE_POOL_SIZE = 1000000000;  // ~1GB
+  static constexpr size_t TENSORSTORE_CACHE_POOL_SIZE = 5000000000;  // ~5GB
 
   template<typename V>
   static ts::TensorStore<V> open_tensorstore(ts::Context &      context,
@@ -41,6 +41,7 @@ namespace {
                      {"path", filename}}},
                    {"cache_pool",
                     {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
+                   {"recheck_cached_data", false},
                    {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
                   context, ts::OpenMode::open, ts::ReadWriteMode::read)
                   .result()
@@ -49,6 +50,7 @@ namespace {
                    {"kvstore", {{"driver", "file"}, {"path", filename}}},
                    {"cache_pool",
                     {{"total_bytes_limit", TENSORSTORE_CACHE_POOL_SIZE}}},
+                   {"recheck_cached_data", false},
                    {"metadata", {{"dtype", dtype_str}, {"shape", dims}}}},
                   context, ts::OpenMode::open, ts::ReadWriteMode::read)
                   .result();
