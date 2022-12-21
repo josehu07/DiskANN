@@ -76,13 +76,12 @@ def handle_query(dataset,
                  use_ts,
                  ts_async,
                  list_sizes,
-                 remote_prefix=None):
+                 remote_prefix=None,
+                 max_query_num=None):
     # we split the address into a url and a relative path
     remote_url, remote_dataset = remote_prefix.rsplit('/', 1) if remote_prefix \
         else (None, None)
     # ensure remote_url and remote_dataset must all be none empty string
-    print(remote_url)
-    print(remote_dataset)
     assert remote_prefix is None or ('/' in remote_prefix
                                      and not not remote_url
                                      and not not remote_dataset)
@@ -116,6 +115,8 @@ def handle_query(dataset,
             options.append('--use_tensors_async')
         if remote_prefix:
             options += ['--use_remote_addr', f'{remote_url}']
+    if max_query_num is not None:
+        options += ['--max_query_num', f'{max_query_num}']
     run_program(PROG_SEARCH_DISK_INDEX, options)
 
 
@@ -186,6 +187,10 @@ if __name__ == "__main__":
         help=
         "remote prefix (URL+path) of dataset for TensorStore http backend; only valid if use_ts",
         default=None)
+    parser_query.add_argument('--max_query_num',
+                              help="maximum number of queries to run",
+                              type=int,
+                              default=None)
 
     args = parser.parse_args()
     if args.subparser == "to_fbin":
@@ -197,4 +202,4 @@ if __name__ == "__main__":
     elif args.subparser == "query":
         handle_query(args.dataset, args.k_depth, args.npts_to_cache,
                      args.use_ts, args.ts_async, args.list_sizes,
-                     args.use_remote)
+                     args.use_remote, args.max_query_num)
